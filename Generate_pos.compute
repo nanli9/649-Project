@@ -1,0 +1,179 @@
+﻿#pragma kernel Pre_solve
+#pragma kernel Find_neighbor
+#pragma kernel Calculate_lambda
+#pragma kernel Calculate_delta_p
+#pragma kernel Post_solve
+#pragma kernel Find_f_pressure
+
+#define THREAD_GROUP_SIZE_X 256
+#define THREAD_GROUP_SIZE_Y 1
+#define THREAD_GROUP_SIZE_Z 1
+#define h 1.0f
+#define h_3 (h * h * h)
+#define h_6 (h_3 * h_3)
+#define h_9 (h_6 * h_3)
+#define PI 3.14159
+struct particle
+{
+    float3 velocity;
+    float lambda;
+    float3 position;
+    float padding;
+};
+struct MeshProperties
+{
+    float4x4 mat;
+    float4 color;
+};
+
+RWStructuredBuffer<particle> particles;
+RWStructuredBuffer<MeshProperties> transformation;
+float deltaTime;
+float inverseRestDensity;
+int population;
+float3 acceleration;
+float Poly6Kernel(float3 p)
+{
+    float d = h * h - dot(p, p);
+    float poly6Coefficient = 315.0f / (64.0f * PI * h_9);
+    if (d < 0)
+        return 0.0f;
+    else
+    {
+        return poly6Coefficient * d * d * d;
+    }
+}
+float Scorr(float3 p)
+{
+    float upper = Poly6Kernel(p);
+    float3 v = 0.1 * h * float3(1, 0, 0);
+    float low = Poly6Kernel(v);
+    float m = upper / low;
+    return -1 * m * m * m * m;
+}
+float3 SpikeKernelGradient(float3 p)
+{
+    float d = h - length(p);
+    float spikeCoefficient = -45.0f / PI;
+    if (d < 0 || length(p) == 0)
+        return float3(0.0f,0.0f,0.0f);
+    else
+    {
+        return (spikeCoefficient * d * d) / (h_6 * length(p)) * normalize(p);
+    }
+
+}
+[numthreads(THREAD_GROUP_SIZE_X, THREAD_GROUP_SIZE_Y, THREAD_GROUP_SIZE_Z)]
+void Pre_solve(uint3 id : SV_DispatchThreadID)
+{
+    uint global_index = id.x;
+    
+    particles[global_index].velocity += acceleration * deltaTime;
+    particles[global_index].position += particles[global_index].velocity * deltaTime;
+}
+
+[numthreads(THREAD_GROUP_SIZE_X, THREAD_GROUP_SIZE_Y, THREAD_GROUP_SIZE_Z)]
+void Find_neighbor(uint3 id : SV_DispatchThreadID)
+{
+    uint global_index = id.x;
+    
+    
+}
+
+[numthreads(THREAD_GROUP_SIZE_X, THREAD_GROUP_SIZE_Y, THREAD_GROUP_SIZE_Z)]
+void Calculate_lambda(uint3 id : SV_DispatchThreadID)
+{
+    uint global_index = id.x;
+    float density = 0.0f;
+    float w = 0.0f;
+    float3 gradient = float3(0.0f, 0.0f, 0.0f);
+    for (int i = 0; i < population;i++)
+    {
+        float3 v = particles[global_index].position - particles[i].position;
+        //naive implementation
+        if (dot(v, v) <= 4.0f)
+        {
+            density += Poly6Kernel(v);
+            float3 tmp = SpikeKernelGradient(v);
+            gradient -= tmp * inverseRestDensity;
+            w += inverseRestDensity * inverseRestDensity * dot(tmp, tmp);
+        }
+    }
+    gradient *= inverseRestDensity;
+    float C = density * inverseRestDensity - 1.0f;
+    float lambda = -C / (w + dot(gradient, gradient) + 100);
+    
+    particles[global_index].lambda = C;
+}
+
+[numthreads(THREAD_GROUP_SIZE_X, THREAD_GROUP_SIZE_Y, THREAD_GROUP_SIZE_Z)]
+void Calculate_delta_p(uint3 id : SV_DispatchThreadID)
+{
+    uint global_index = id.x;
+    float3 delta_p = float3(0.0f, 0.0f, 0.0f);
+    for (int i = 0; i < population; i++)
+    {
+        float3 v = particles[global_index].position - particles[i].position;
+        //naive implementation
+        if (dot(v, v) <= 4.0f)
+        {
+            float s_corr = Scorr(v);
+            float3 gradient = SpikeKernelGradient(v);
+            delta_p += inverseRestDensity * (particles[global_index].lambda + s_corr) * gradient;
+        }
+    }
+    float3 pos = particles[global_index].position + delta_p;
+    
+    float min_x = 0, max_x = 20;
+    float min_y = 0, max_y = 20;
+    float min_z = 0, max_z = 20;
+    float offset = 0.0f;
+    if (pos.x <= min_x)
+    {
+        pos.x = min_x + offset;
+    }
+    else if (pos.x >= max_x)
+    {
+        pos.x = max_x - offset;
+    }
+    if (pos.y <= min_y)
+    {
+        pos.y = min_y + offset;
+    }
+    else if (pos.y >= max_y)
+        pos.y = max_y - offset;
+
+    if (pos.z <= min_z)
+    {
+        pos.z = min_z + offset;
+    }
+    else if (pos.z >= max_z)
+    {
+        pos.z = max_z - offset;
+    }
+    
+    particles[global_index].position = pos;
+}
+
+[numthreads(THREAD_GROUP_SIZE_X, THREAD_GROUP_SIZE_Y, THREAD_GROUP_SIZE_Z)]
+void Post_solve(uint3 id : SV_DispatchThreadID)
+{
+    uint global_index = id.x;
+    float3 pre_pos = float3(transformation[global_index].mat[0][3], transformation[global_index].mat[1][3], transformation[global_index].mat[2][3]);
+    float3 cur_pos = particles[global_index].position;
+    
+    particles[global_index].velocity = 0.99f * (cur_pos - pre_pos)/deltaTime;
+    
+    
+    transformation[global_index].mat[0][3] = particles[global_index].position[0];
+    transformation[global_index].mat[1][3] = particles[global_index].position[1];
+    transformation[global_index].mat[2][3] = particles[global_index].position[2];
+}
+
+[numthreads(THREAD_GROUP_SIZE_X, THREAD_GROUP_SIZE_Y, THREAD_GROUP_SIZE_Z)]
+void Find_f_pressure(uint3 id : SV_DispatchThreadID)
+{
+    uint global_index = id.x;
+    
+}
+
