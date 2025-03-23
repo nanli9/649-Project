@@ -21,6 +21,7 @@ public class generate_particles : MonoBehaviour
     public Vector2Int boundingBox_x;
     public Vector2Int boundingBox_y;
     public Vector2Int boundingBox_z;
+    particle[] result;
 
     [SerializeField]
     ComputeShader computeShader;
@@ -48,6 +49,8 @@ public class generate_particles : MonoBehaviour
         public Vector3 velocity;
         public float lambda;
         public Vector3 position;
+        public int flag;
+        public Vector3 acceleration;
         float padding;
     };
     private void Setup()
@@ -61,6 +64,7 @@ public class generate_particles : MonoBehaviour
     private void InitializeBuffers()
     {
         population = init_pos_range.x * init_pos_range.y * init_pos_range.z;
+        result = new particle[population];
 
         // Argument buffer used by DrawMeshInstancedIndirect.
         uint[] args = new uint[5] { 0, 0, 0, 0, 0 };
@@ -90,6 +94,7 @@ public class generate_particles : MonoBehaviour
                     float pos_z = k * spacing;
                     p.position = new Vector3(pos_x, pos_y, pos_z);
                     p.velocity = new Vector3(0,0.01f,0);
+                    p.acceleration = new Vector3(0,-10.0f,0);
                     p.lambda = 0.0f;
                     particles[index] = p;
 
@@ -105,7 +110,7 @@ public class generate_particles : MonoBehaviour
         }
 
         meshPropertiesBuffer = new ComputeBuffer(population, MeshProperties.Size());
-        particlesBuffer = new ComputeBuffer(population, 2 * 4 * sizeof(float));
+        particlesBuffer = new ComputeBuffer(population, 3 * 4 * sizeof(float));
 
         meshPropertiesBuffer.SetData(properties);
         particlesBuffer.SetData(particles);
@@ -127,10 +132,18 @@ public class generate_particles : MonoBehaviour
         int Post_solve_kernel = computeShader.FindKernel("Post_solve");
         int Calculate_lambda_kernel = computeShader.FindKernel("Calculate_lambda");
         int Calculate_delta_p_kernel = computeShader.FindKernel("Calculate_delta_p");
+        int Calculate_f_pressure_kernel = computeShader.FindKernel("Calculate_f_pressure");
         computeShader.SetFloat("deltaTime",0.01f);
         computeShader.SetInt("population", population);
         computeShader.SetFloat("inverseRestDensity", inverseRestDensity);
-        computeShader.SetVector("acceleration",new Vector4(0,-10,0,0));
+        //computeShader.SetVector("acceleration",new Vector4(0,-10,0,0));
+        computeShader.SetVector("hapticInteractionPoint", hapticInteractionPoint);
+        computeShader.SetInt("min_x", boundingBox_x.x);
+        computeShader.SetInt("max_x", boundingBox_x.y);
+        computeShader.SetInt("min_y", boundingBox_y.x);
+        computeShader.SetInt("max_y", boundingBox_y.y);
+        computeShader.SetInt("min_z", boundingBox_z.x);
+        computeShader.SetInt("max_z", boundingBox_z.y);
 
         computeShader.SetBuffer(Pre_solve_kernel, "particles", particlesBuffer);
         computeShader.Dispatch(Pre_solve_kernel, Mathf.CeilToInt(population / 256f), 1, 1);
@@ -149,36 +162,20 @@ public class generate_particles : MonoBehaviour
         computeShader.Dispatch(Post_solve_kernel, Mathf.CeilToInt(population / 256f), 1, 1);
 
         //find the f_pressure
-
-
-
+        //computeShader.Dispatch(Calculate_f_pressure_kernel, Mathf.CeilToInt(population / 256f), 1, 1);
+        int count = 0;
+        particlesBuffer.GetData(result);
+        for(int i=0;i<population;i++)
+        {
+            Vector3 v = hapticInteractionPoint - result[i].position;
+            if (Vector3.Dot(v,v)<= 1.0f)
+            {
+                count++;
+            }
+        }
+        Debug.Log(count);
         //indirect call to render
         instanceMaterial.SetBuffer("_Properties", meshPropertiesBuffer);
         Graphics.DrawMeshInstancedIndirect(sphereMesh, 0, instanceMaterial, bounds, argsBuffer);
-        //int kernelHandle = computeShader.FindKernel("Generate_pos");
-
-        // Set the buffer to the compute shader
-        /*computeShader.SetBuffer(kernelHandle, "positions", dataBuffer);
-        computeShader.Dispatch(kernelHandle, instances_x / numThread_x, instances_y / numThread_y, instances_z / numThread_z);
-        instanceMaterial.SetBuffer("_InstanceDataBuffer", dataBuffer);*/
-
-        /*Vector3[] results = new Vector3[instances_x * instances_y * instances_z];
-        dataBuffer.GetData(results);*/
-
-        // Log the results
-        /*for (int i = 0; i < results.Length; i++)
-        {
-            Debug.Log($"Result {i}: {results[i].ToString()}");
-        }
-        // Release the buffer after use
-        dataBuffer.Release();*/
-    }
-    void OnRenderObject()
-    {
-        instanceMaterial.SetPass(0);
-
-        // Draw the instances
-        //Graphics.DrawMeshInstancedProcedural(sphereMesh, 0, instanceMaterial, new Bounds(Vector3.zero, new Vector3(100, 100, 100)), instances_x * instances_y * instances_z);
-
     }
 }
