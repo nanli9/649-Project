@@ -134,16 +134,11 @@ void Calculate_delta_p(uint3 id : SV_DispatchThreadID)
     }
     float3 pos = particles[global_index].position + delta_p;
     
-    float offset = 0.01f;
-
-    pos.x = (min_x + offset) * (pos.x < min_x) + pos.x * (pos.x > min_x);
-    pos.x = (max_x - offset) * (pos.x > max_x) + pos.x * (pos.x < max_x);
-
-    pos.y = (min_y + offset) * (pos.y < min_y) + pos.y * (pos.y > min_y);
-    pos.y = (max_y - offset) * (pos.y > max_y) + pos.y * (pos.y < max_y);
-
-    pos.z = (min_z + offset) * (pos.z < min_z) + pos.z * (pos.z > min_z);
-    pos.z = (max_z - offset) * (pos.z > max_z) + pos.z * (pos.z < max_z);
+    float offset = 0.5f;
+    
+    pos.x = clamp(pos.x, min_x - offset, max_x + offset);
+    pos.y = clamp(pos.y, min_y - offset, max_y + offset);
+    pos.z = clamp(pos.z, min_z - offset, max_z + offset);
    
     
     particles[global_index].position = pos;
