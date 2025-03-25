@@ -33,7 +33,8 @@ struct MeshProperties
 
 RWStructuredBuffer<particle> particles;
 RWStructuredBuffer<MeshProperties> transformation;
-RWStructuredBuffer<float3> haptic_force;
+RWStructuredBuffer<float3> hapticOutputForce;
+float3 hapticIntPutForce;
 float deltaTime;
 float inverseRestDensity;
 int population;
@@ -41,6 +42,7 @@ int min_x, max_x;
 int min_y, max_y;
 int min_z, max_z;
 float3 hapticInteractionPoint;
+groupshared int force_x;
 
 float Poly6Kernel(float3 p)
 {
@@ -133,7 +135,7 @@ void Calculate_delta_p(uint3 id : SV_DispatchThreadID)
     }
     float3 pos = particles[global_index].position + delta_p;
     
-    float offset = 0.5f;
+    float offset = 0.0f;
     
     pos.x = clamp(pos.x, min_x - offset, max_x + offset);
     pos.y = clamp(pos.y, min_y - offset, max_y + offset);
@@ -164,9 +166,11 @@ void Calculate_f_pressure(uint3 id : SV_DispatchThreadID)
     float3 pressure_force = float3(0,0,0);
     float density = 0.0f;
     float3 gradient = float3(0.0f, 0.0f, 0.0f);
-    
-    //calculate the output force
-    
+    float3 v = particles[global_index].position - hapticInteractionPoint;
+    hapticOutputForce[0] = float3(0, 0, 0);
+    ////calculate the output force
+    if (dot(v, v) <= 1.0f)
+        hapticOutputForce[0] += 0.2 * v;//particles[global_index].position;
 }
 
 [numthreads(THREAD_GROUP_SIZE_X, THREAD_GROUP_SIZE_Y, THREAD_GROUP_SIZE_Z)]
@@ -175,5 +179,5 @@ void Apply_f_pressure(uint3 id : SV_DispatchThreadID)
     uint global_index = id.x;
     
     float3 v = particles[global_index].position - hapticInteractionPoint;
-    particles[global_index].acceleration = (dot(v, v) <= 1.0f) * float3(10, 10, 0) + (dot(v, v) > 1.0f) * float3(0, -10, 0);
+    particles[global_index].acceleration = 3 * (dot(v, v) <= 1.0f) * hapticIntPutForce + (dot(v, v) > 1.0f) * float3(0, -10, 0);
 }

@@ -17,16 +17,20 @@ public class generate_particles : MonoBehaviour
     public Vector3 hapticPressureForce; // what I will update
     public Vector3 hapticInForce; //read only
 
+    public GameObject hapticPluginObject;
+    private HapticPlugin hapticScript;
+
     //bounding box
     public Vector2Int boundingBox_x;
     public Vector2Int boundingBox_y;
     public Vector2Int boundingBox_z;
-    particle[] result;
+    Vector3[] result;
 
     [SerializeField]
     ComputeShader computeShader;
     private ComputeBuffer meshPropertiesBuffer;  // Buffer for structured data
     private ComputeBuffer particlesBuffer;  // Buffer for particles
+    private ComputeBuffer hapticOutputBuffer;  // Buffer for hapticOutput force
     private ComputeBuffer argsBuffer;
     private Bounds bounds;
     private int population;
@@ -59,12 +63,14 @@ public class generate_particles : MonoBehaviour
         bounds = new Bounds(transform.position, Vector3.one * (range + 1));
         inverseRestDensity = 1.0f / rest_density;
         InitializeBuffers();
+
+        hapticScript = hapticPluginObject.GetComponent<HapticPlugin>();
     }
     //initialize buffer for compute shader and indirect call
     private void InitializeBuffers()
     {
         population = init_pos_range.x * init_pos_range.y * init_pos_range.z;
-        result = new particle[population];
+        result = new Vector3[1];
 
         // Argument buffer used by DrawMeshInstancedIndirect.
         uint[] args = new uint[5] { 0, 0, 0, 0, 0 };
@@ -80,6 +86,7 @@ public class generate_particles : MonoBehaviour
         // Initialize buffer with the given population.
         MeshProperties[] properties = new MeshProperties[population];
         particle[] particles = new particle[population];
+        Vector3[] hapticOutput = new Vector3[1];
         //initialize the position of the particles 
         for (int i = 0;i < init_pos_range.x; i++)
         {
@@ -93,7 +100,7 @@ public class generate_particles : MonoBehaviour
                     float pos_y = j * spacing;
                     float pos_z = 2 + k * spacing;
                     p.position = new Vector3(pos_x, pos_y, pos_z);
-                    p.velocity = new Vector3(0,0.01f,0);
+                    p.velocity = new Vector3(0,0.0f,0);
                     p.acceleration = new Vector3(0,-10.0f,0);
                     p.lambda = 0.0f;
                     particles[index] = p;
@@ -111,9 +118,11 @@ public class generate_particles : MonoBehaviour
 
         meshPropertiesBuffer = new ComputeBuffer(population, MeshProperties.Size());
         particlesBuffer = new ComputeBuffer(population, 3 * 4 * sizeof(float));
+        hapticOutputBuffer = new ComputeBuffer(1, 3 * sizeof(float));
 
         meshPropertiesBuffer.SetData(properties);
         particlesBuffer.SetData(particles);
+        hapticOutputBuffer.SetData(hapticOutput);
 
         instanceMaterial.SetBuffer("_Properties", meshPropertiesBuffer);
     }
@@ -127,6 +136,10 @@ public class generate_particles : MonoBehaviour
     // Update is called once per frame
     void Update()
     {
+        //retrieve the data from haptic device
+        hapticInteractionPoint = hapticScript.Mapped_HPos;
+        hapticInForce = hapticScript.forceInput;
+
         //dispatch kernels
         int Pre_solve_kernel = computeShader.FindKernel("Pre_solve");
         int Post_solve_kernel = computeShader.FindKernel("Post_solve");
@@ -139,6 +152,7 @@ public class generate_particles : MonoBehaviour
         computeShader.SetFloat("inverseRestDensity", inverseRestDensity);
         //computeShader.SetVector("acceleration",new Vector4(0,-10,0,0));
         computeShader.SetVector("hapticInteractionPoint", hapticInteractionPoint);
+        computeShader.SetVector("hapticIntPutForce", hapticInForce);
         computeShader.SetInt("min_x", boundingBox_x.x);
         computeShader.SetInt("max_x", boundingBox_x.y);
         computeShader.SetInt("min_y", boundingBox_y.x);
@@ -161,15 +175,21 @@ public class generate_particles : MonoBehaviour
         computeShader.SetBuffer(Post_solve_kernel, "transformation", meshPropertiesBuffer);
         computeShader.Dispatch(Post_solve_kernel, Mathf.CeilToInt(population / 256f), 1, 1);
 
-        //computeShader.SetBuffer(Calculate_f_pressure_kernel, "particles", particlesBuffer);
-        //computeShader.Dispatch(Calculate_f_pressure_kernel, Mathf.CeilToInt(population / 256f), 1, 1);
+
+        computeShader.SetBuffer(Calculate_f_pressure_kernel, "particles", particlesBuffer);
+        computeShader.SetBuffer(Calculate_f_pressure_kernel, "hapticOutputForce", hapticOutputBuffer);
+        computeShader.Dispatch(Calculate_f_pressure_kernel, Mathf.CeilToInt(population / 256f), 1, 1);
 
         computeShader.SetBuffer(Apply_f_pressure_kernel, "particles", particlesBuffer);
         computeShader.Dispatch(Apply_f_pressure_kernel, Mathf.CeilToInt(population / 256f), 1, 1);
 
+        hapticOutputBuffer.GetData(result);
+        hapticPressureForce = result[0];
+        //result[0] = new Vector3(0, 0, 0);
+        //Debug.Log(result[0]);
         //find the f_pressure
         //computeShader.Dispatch(Calculate_f_pressure_kernel, Mathf.CeilToInt(population / 256f), 1, 1);
-        int count = 0;
+        /*int count = 0;
         particlesBuffer.GetData(result);
         for(int i=0;i<population;i++)
         {
@@ -179,7 +199,7 @@ public class generate_particles : MonoBehaviour
                 count++;
             }
         }
-        Debug.Log(count);
+        Debug.Log(count);*/
         //indirect call to render
         instanceMaterial.SetBuffer("_Properties", meshPropertiesBuffer);
         Graphics.DrawMeshInstancedIndirect(sphereMesh, 0, instanceMaterial, bounds, argsBuffer);
