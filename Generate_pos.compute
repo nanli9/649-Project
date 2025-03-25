@@ -4,6 +4,7 @@
 #pragma kernel Calculate_delta_p
 #pragma kernel Post_solve
 #pragma kernel Calculate_f_pressure
+#pragma kernel Apply_f_pressure
 
 #define THREAD_GROUP_SIZE_X 256
 #define THREAD_GROUP_SIZE_Y 1
@@ -44,7 +45,6 @@ float3 hapticInteractionPoint;
 float Poly6Kernel(float3 p)
 {
     float d = h * h - dot(p, p);
-    //float poly6Coefficient = 315.0f / (64.0f * PI * h_9);
     if (d < 0)
         return 0.0f;
     else
@@ -63,7 +63,6 @@ float Scorr(float3 p)
 float3 SpikeKernelGradient(float3 p)
 {
     float d = h - length(p);
-    //float spikeCoefficient = -45.0f / (PI * h_6);
     if (d < 0 || length(p) == 0)
         return float3(0.0f,0.0f,0.0f);
     else
@@ -161,23 +160,20 @@ void Post_solve(uint3 id : SV_DispatchThreadID)
 [numthreads(THREAD_GROUP_SIZE_X, THREAD_GROUP_SIZE_Y, THREAD_GROUP_SIZE_Z)]
 void Calculate_f_pressure(uint3 id : SV_DispatchThreadID)
 {
-    //uint global_index = id.x;
-    //float3 pressure_force = float3(0,0,0);
-    //float density = 0.0f;
-    //float3 gradient = float3(0.0f, 0.0f, 0.0f);
-    //for (int i = 0; i < population; i++)
-    //{
-    //    float3 v = hapticInteractionPoint - particles[i].position;
-    //    //naive implementation
-    //    if (dot(v, v) <= 1.0f)
-    //    {
-    //        density += Poly6Kernel(v);
-    //        float3 tmp = SpikeKernelGradient(v);
-    //        gradient -= tmp * inverseRestDensity;
-    //        w += inverseRestDensity * inverseRestDensity * dot(tmp, tmp);
-    //    }
-    //}
-
-    //haptic_force[0] = pressure_force;
+    uint global_index = id.x;
+    float3 pressure_force = float3(0,0,0);
+    float density = 0.0f;
+    float3 gradient = float3(0.0f, 0.0f, 0.0f);
+    
+    //calculate the output force
+    
 }
 
+[numthreads(THREAD_GROUP_SIZE_X, THREAD_GROUP_SIZE_Y, THREAD_GROUP_SIZE_Z)]
+void Apply_f_pressure(uint3 id : SV_DispatchThreadID)
+{
+    uint global_index = id.x;
+    
+    float3 v = particles[global_index].position - hapticInteractionPoint;
+    particles[global_index].acceleration = (dot(v, v) <= 1.0f) * float3(10, 10, 0) + (dot(v, v) > 1.0f) * float3(0, -10, 0);
+}

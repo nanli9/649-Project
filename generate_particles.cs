@@ -89,9 +89,9 @@ public class generate_particles : MonoBehaviour
                 {
                     particle p = new particle();
                     int index = init_pos_range.y * init_pos_range.z * i + init_pos_range.z * j + k;
-                    float pos_x = i * spacing;
+                    float pos_x = 2 + i * spacing;
                     float pos_y = j * spacing;
-                    float pos_z = k * spacing;
+                    float pos_z = 2 + k * spacing;
                     p.position = new Vector3(pos_x, pos_y, pos_z);
                     p.velocity = new Vector3(0,0.01f,0);
                     p.acceleration = new Vector3(0,-10.0f,0);
@@ -133,6 +133,7 @@ public class generate_particles : MonoBehaviour
         int Calculate_lambda_kernel = computeShader.FindKernel("Calculate_lambda");
         int Calculate_delta_p_kernel = computeShader.FindKernel("Calculate_delta_p");
         int Calculate_f_pressure_kernel = computeShader.FindKernel("Calculate_f_pressure");
+        int Apply_f_pressure_kernel = computeShader.FindKernel("Apply_f_pressure");
         computeShader.SetFloat("deltaTime",0.01f);
         computeShader.SetInt("population", population);
         computeShader.SetFloat("inverseRestDensity", inverseRestDensity);
@@ -153,13 +154,18 @@ public class generate_particles : MonoBehaviour
         computeShader.SetBuffer(Calculate_lambda_kernel, "particles", particlesBuffer);
         computeShader.Dispatch(Calculate_lambda_kernel, Mathf.CeilToInt(population / 256f), 1, 1);
 
-
         computeShader.SetBuffer(Calculate_delta_p_kernel, "particles", particlesBuffer);
         computeShader.Dispatch(Calculate_delta_p_kernel, Mathf.CeilToInt(population / 256f), 1, 1);
 
         computeShader.SetBuffer(Post_solve_kernel, "particles", particlesBuffer);
         computeShader.SetBuffer(Post_solve_kernel, "transformation", meshPropertiesBuffer);
         computeShader.Dispatch(Post_solve_kernel, Mathf.CeilToInt(population / 256f), 1, 1);
+
+        //computeShader.SetBuffer(Calculate_f_pressure_kernel, "particles", particlesBuffer);
+        //computeShader.Dispatch(Calculate_f_pressure_kernel, Mathf.CeilToInt(population / 256f), 1, 1);
+
+        computeShader.SetBuffer(Apply_f_pressure_kernel, "particles", particlesBuffer);
+        computeShader.Dispatch(Apply_f_pressure_kernel, Mathf.CeilToInt(population / 256f), 1, 1);
 
         //find the f_pressure
         //computeShader.Dispatch(Calculate_f_pressure_kernel, Mathf.CeilToInt(population / 256f), 1, 1);
