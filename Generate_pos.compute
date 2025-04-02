@@ -1,10 +1,12 @@
 ﻿#pragma kernel Pre_solve
-#pragma kernel Find_neighbor
 #pragma kernel Calculate_lambda
 #pragma kernel Calculate_delta_p
 #pragma kernel Post_solve
 #pragma kernel Calculate_f_pressure
 #pragma kernel Apply_f_pressure
+#pragma kernel Histogram
+#pragma kernel Scan
+#pragma kernel Scatter
 
 #define THREAD_GROUP_SIZE_X 256
 #define THREAD_GROUP_SIZE_Y 1
@@ -23,7 +25,7 @@ struct particle
     float3 position;
     int flag;
     float3 acceleration;
-    float padding;
+    float density;
 };
 struct MeshProperties
 {
@@ -42,8 +44,21 @@ int min_x, max_x;
 int min_y, max_y;
 int min_z, max_z;
 float3 hapticInteractionPoint;
+float spacing;
 groupshared int force_x;
 
+int find_bin(float3 p)
+{
+    int num_bin_x = int((max_x - min_x) / spacing);
+    int num_bin_y = int((max_y - min_y) / spacing);
+    int num_bin_z = int((max_z - min_z) / spacing);
+
+    int x = clamp(int((p.x - min_x) / spacing), 0, num_bin_x);
+    int y = clamp(int((p.y - min_y) / spacing), 0, num_bin_y);
+    int z = clamp(int((p.z - min_z) / spacing), 0, num_bin_z);
+
+    return num_bin_x * num_bin_y * z + num_bin_x * y + x;
+}
 float Poly6Kernel(float3 p)
 {
     float d = h * h - dot(p, p);
@@ -84,13 +99,26 @@ void Pre_solve(uint3 id : SV_DispatchThreadID)
 }
 
 [numthreads(THREAD_GROUP_SIZE_X, THREAD_GROUP_SIZE_Y, THREAD_GROUP_SIZE_Z)]
-void Find_neighbor(uint3 id : SV_DispatchThreadID)
+void Histogram(uint3 id : SV_DispatchThreadID)
 {
     uint global_index = id.x;
     
     
 }
+[numthreads(THREAD_GROUP_SIZE_X, THREAD_GROUP_SIZE_Y, THREAD_GROUP_SIZE_Z)]
+void Scan(uint3 id : SV_DispatchThreadID)
+{
+    uint global_index = id.x;
 
+
+}
+[numthreads(THREAD_GROUP_SIZE_X, THREAD_GROUP_SIZE_Y, THREAD_GROUP_SIZE_Z)]
+void Scatter(uint3 id : SV_DispatchThreadID)
+{
+    uint global_index = id.x;
+
+
+}
 [numthreads(THREAD_GROUP_SIZE_X, THREAD_GROUP_SIZE_Y, THREAD_GROUP_SIZE_Z)]
 void Calculate_lambda(uint3 id : SV_DispatchThreadID)
 {
@@ -115,6 +143,7 @@ void Calculate_lambda(uint3 id : SV_DispatchThreadID)
     float lambda = -C / (w + dot(gradient, gradient) + 200);
     
     particles[global_index].lambda = C;
+    particles[global_index].density = density;
 }
 
 [numthreads(THREAD_GROUP_SIZE_X, THREAD_GROUP_SIZE_Y, THREAD_GROUP_SIZE_Z)]
@@ -170,7 +199,7 @@ void Calculate_f_pressure(uint3 id : SV_DispatchThreadID)
     hapticOutputForce[0] = float3(0, 0, 0);
     ////calculate the output force
     if (dot(v, v) <= 1.0f)
-        hapticOutputForce[0] += 0.2 * v;//particles[global_index].position;
+        hapticOutputForce[0] += 0.4 * v;//particles[global_index].position;
 }
 
 [numthreads(THREAD_GROUP_SIZE_X, THREAD_GROUP_SIZE_Y, THREAD_GROUP_SIZE_Z)]

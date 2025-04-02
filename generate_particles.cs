@@ -31,6 +31,7 @@ public class generate_particles : MonoBehaviour
     private ComputeBuffer meshPropertiesBuffer;  // Buffer for structured data
     private ComputeBuffer particlesBuffer;  // Buffer for particles
     private ComputeBuffer hapticOutputBuffer;  // Buffer for hapticOutput force
+    private ComputeBuffer binBuffer;  // Buffer for histogram calculation
     private ComputeBuffer argsBuffer;
     private Bounds bounds;
     private int population;
@@ -55,7 +56,7 @@ public class generate_particles : MonoBehaviour
         public Vector3 position;
         public int flag;
         public Vector3 acceleration;
-        float padding;
+        float density;
     };
     private void Setup()
     {
@@ -108,7 +109,7 @@ public class generate_particles : MonoBehaviour
                     MeshProperties props = new MeshProperties();
                     Vector3 position = new Vector3(pos_x, pos_y, pos_z);
                     Quaternion rotation = Quaternion.identity;
-                    Vector3 scale = 0.5f * Vector3.one;
+                    Vector3 scale = 0.2f * Vector3.one;
                     props.mat = Matrix4x4.TRS(position, rotation, scale);
                     props.color = Color.Lerp(Color.red, Color.blue, Random.value);
                     properties[index] = props;
@@ -119,6 +120,8 @@ public class generate_particles : MonoBehaviour
         meshPropertiesBuffer = new ComputeBuffer(population, MeshProperties.Size());
         particlesBuffer = new ComputeBuffer(population, 3 * 4 * sizeof(float));
         hapticOutputBuffer = new ComputeBuffer(1, 3 * sizeof(float));
+
+        binBuffer = new ComputeBuffer(1, 3 * sizeof(float));
 
         meshPropertiesBuffer.SetData(properties);
         particlesBuffer.SetData(particles);
@@ -153,6 +156,7 @@ public class generate_particles : MonoBehaviour
         //computeShader.SetVector("acceleration",new Vector4(0,-10,0,0));
         computeShader.SetVector("hapticInteractionPoint", hapticInteractionPoint);
         computeShader.SetVector("hapticIntPutForce", hapticInForce);
+        computeShader.SetFloat("spacing", 2.0f);
         computeShader.SetInt("min_x", boundingBox_x.x);
         computeShader.SetInt("max_x", boundingBox_x.y);
         computeShader.SetInt("min_y", boundingBox_y.x);
