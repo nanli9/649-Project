@@ -6,6 +6,7 @@
 #pragma kernel Apply_f_pressure
 #pragma kernel Histogram
 #pragma kernel Scan
+#pragma kernel Scan_per_block_combine
 #pragma kernel Scatter
 
 #define THREAD_GROUP_SIZE_X 256
@@ -26,6 +27,8 @@ struct particle
     int flag;
     float3 acceleration;
     float density;
+    float3 prePosition;
+    int padding;
 };
 struct MeshProperties
 {
@@ -34,8 +37,14 @@ struct MeshProperties
 };
 
 RWStructuredBuffer<particle> particles;
+RWStructuredBuffer<particle> unsortedParticles;
 RWStructuredBuffer<MeshProperties> transformation;
+RWStructuredBuffer<int> globalHistogram;
+RWStructuredBuffer<int> globalHistogramPrefixSum;
 RWStructuredBuffer<float3> hapticOutputForce;
+//just for scan input buffer
+RWStructuredBuffer<int> scanInput;
+RWStructuredBuffer<int> scanBlockSum;
 float3 hapticIntPutForce;
 float deltaTime;
 float inverseRestDensity;
@@ -46,16 +55,16 @@ int min_z, max_z;
 float3 hapticInteractionPoint;
 float spacing;
 groupshared int force_x;
-
+groupshared int sharedArrayScan[THREAD_GROUP_SIZE_X * 2];
 int find_bin(float3 p)
 {
     int num_bin_x = int((max_x - min_x) / spacing);
     int num_bin_y = int((max_y - min_y) / spacing);
     int num_bin_z = int((max_z - min_z) / spacing);
 
-    int x = clamp(int((p.x - min_x) / spacing), 0, num_bin_x);
-    int y = clamp(int((p.y - min_y) / spacing), 0, num_bin_y);
-    int z = clamp(int((p.z - min_z) / spacing), 0, num_bin_z);
+    int x = clamp(int((p.x - min_x) / spacing), 0, num_bin_x - 1);
+    int y = clamp(int((p.y - min_y) / spacing), 0, num_bin_y - 1);
+    int z = clamp(int((p.z - min_z) / spacing), 0, num_bin_z - 1);
 
     return num_bin_x * num_bin_y * z + num_bin_x * y + x;
 }
@@ -92,7 +101,7 @@ float3 SpikeKernelGradient(float3 p)
 void Pre_solve(uint3 id : SV_DispatchThreadID)
 {
     uint global_index = id.x;
-    
+    particles[global_index].prePosition = particles[global_index].position;
     particles[global_index].velocity += particles[global_index].acceleration * deltaTime;
     particles[global_index].position += particles[global_index].velocity * deltaTime;
     particles[global_index].acceleration = float3(0,-10.0f,0);
@@ -102,22 +111,59 @@ void Pre_solve(uint3 id : SV_DispatchThreadID)
 void Histogram(uint3 id : SV_DispatchThreadID)
 {
     uint global_index = id.x;
-    
-    
+    //int binIndex = global_index % 8000;
+    int binIndex = find_bin(unsortedParticles[global_index].position);
+    InterlockedAdd(globalHistogram[binIndex], 1, unsortedParticles[global_index].flag);
+    unsortedParticles[global_index].padding = binIndex;
 }
 [numthreads(THREAD_GROUP_SIZE_X, THREAD_GROUP_SIZE_Y, THREAD_GROUP_SIZE_Z)]
-void Scan(uint3 id : SV_DispatchThreadID)
+void Scan(uint3 globalId : SV_DispatchThreadID, uint3 localId : SV_GroupThreadID, uint3 groupId : SV_GroupID)
 {
-    uint global_index = id.x;
-
+    uint globalIndex = globalId.x;
+    uint localIndex = localId.x;
+    int n = THREAD_GROUP_SIZE_X;
+    
+    int pout = 0, pin = 1;
+    int lastElement = localIndex == 255 ? scanInput[globalIndex] : 0;
+    sharedArrayScan[pout * n + localIndex] = (localIndex > 0) ? scanInput[globalIndex - 1] : 0;
+    GroupMemoryBarrierWithGroupSync();
+    for (int offset = 1; offset < n; offset *= 2)
+    {
+        pout = 1 - pout;
+        pin = 1 - pout;
+        if (localIndex >= offset)
+            sharedArrayScan[pout * n + localIndex] = sharedArrayScan[pin * n + localIndex] + sharedArrayScan[pin * n + localIndex - offset];
+        else
+            sharedArrayScan[pout * n + localIndex] = sharedArrayScan[pin * n + localIndex];
+        GroupMemoryBarrierWithGroupSync();
+    }
+    scanInput[globalIndex] = sharedArrayScan[pout * n + localIndex];
+    if (localIndex == THREAD_GROUP_SIZE_X - 1)
+        scanBlockSum[groupId.x] = sharedArrayScan[pout * n + localIndex] + lastElement;
 
 }
+[numthreads(THREAD_GROUP_SIZE_X, THREAD_GROUP_SIZE_Y, THREAD_GROUP_SIZE_Z)]
+void Scan_per_block_combine(uint3 globalId : SV_DispatchThreadID, uint3 groupId : SV_GroupID)
+{
+    uint globalIndex = globalId.x;
+    uint numOfGroupIndex = groupId.x;
+    
+    globalHistogram[globalIndex] = globalHistogram[globalIndex] + scanBlockSum[numOfGroupIndex];
+
+}
+
 [numthreads(THREAD_GROUP_SIZE_X, THREAD_GROUP_SIZE_Y, THREAD_GROUP_SIZE_Z)]
 void Scatter(uint3 id : SV_DispatchThreadID)
 {
     uint global_index = id.x;
-
-
+    int binIndex = find_bin(unsortedParticles[global_index].position);
+    //int binIndex = global_index % 8000;
+    uint globalStartIndex = globalHistogram[binIndex];
+    
+    particles[globalStartIndex + unsortedParticles[global_index].flag] = unsortedParticles[global_index];
+    //check if sorted
+    particles[globalStartIndex + unsortedParticles[global_index].flag].flag = globalStartIndex + unsortedParticles[global_index].flag;
+    unsortedParticles[global_index].flag = particles[globalStartIndex + unsortedParticles[global_index].flag].flag;
 }
 [numthreads(THREAD_GROUP_SIZE_X, THREAD_GROUP_SIZE_Y, THREAD_GROUP_SIZE_Z)]
 void Calculate_lambda(uint3 id : SV_DispatchThreadID)
@@ -178,14 +224,21 @@ void Calculate_delta_p(uint3 id : SV_DispatchThreadID)
 void Post_solve(uint3 id : SV_DispatchThreadID)
 {
     uint global_index = id.x;
-    float3 pre_pos = float3(transformation[global_index].mat[0][3], transformation[global_index].mat[1][3], transformation[global_index].mat[2][3]);
+    //float3 pre_pos = float3(transformation[global_index].mat[0][3], transformation[global_index].mat[1][3], transformation[global_index].mat[2][3]);
+    float3 pre_pos = particles[global_index].prePosition;
     float3 cur_pos = particles[global_index].position;
     
     particles[global_index].velocity = 0.99f * (cur_pos - pre_pos)/deltaTime;
     
+    unsortedParticles[global_index] = particles[global_index];
+    
     transformation[global_index].mat[0][3] = particles[global_index].position[0];
     transformation[global_index].mat[1][3] = particles[global_index].position[1];
     transformation[global_index].mat[2][3] = particles[global_index].position[2];
+    
+    //reset to 0
+    //globalHistogramPrefixSum[global_index] = 0;
+    globalHistogram[global_index] = 0;
 }
 
 [numthreads(THREAD_GROUP_SIZE_X, THREAD_GROUP_SIZE_Y, THREAD_GROUP_SIZE_Z)]
