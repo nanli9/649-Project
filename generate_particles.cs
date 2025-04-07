@@ -9,6 +9,7 @@ using static UnityEngine.ParticleSystem;
 public class generate_particles : MonoBehaviour
 {
     const int binSpacing = 1;
+    public int solveIteration;
     public float range;
     public Vector3Int init_pos_range;
     public float rest_density;
@@ -67,6 +68,9 @@ public class generate_particles : MonoBehaviour
         float density;
         public Vector3 prePosition;
         public int padding;
+        public Vector3 delta_p;
+        public int padding2;
+        
     };
     private void Setup()
     {
@@ -84,7 +88,7 @@ public class generate_particles : MonoBehaviour
         result = new Vector3[1];
         numOfBins = (boundingBox_x[1] - boundingBox_x[0]) / binSpacing *
                         (boundingBox_y[1] - boundingBox_y[0]) / binSpacing *
-                        (boundingBox_z[1] - boundingBox_z[0]) / binSpacing;
+                        (boundingBox_z[1] - boundingBox_z[0]) / binSpacing + 1;
         // Argument buffer used by DrawMeshInstancedIndirect.
         uint[] args = new uint[5] { 0, 0, 0, 0, 0 };
         // Arguments for drawing mesh.
@@ -111,9 +115,9 @@ public class generate_particles : MonoBehaviour
                 {
                     particle p = new particle();
                     int index = init_pos_range.y * init_pos_range.z * i + init_pos_range.z * j + k;
-                    float pos_x = 2 + i * spacing;
-                    float pos_y = j * spacing;
-                    float pos_z = 2 + k * spacing;
+                    float pos_x = 3 + i * spacing;
+                    float pos_y = 0 + j * spacing;
+                    float pos_z = 3 + k * spacing;
                     p.position = new Vector3(pos_x, pos_y, pos_z);
                     p.velocity = new Vector3(0,0.0f,0);
                     p.acceleration = new Vector3(0,-10.0f,0);
@@ -126,15 +130,15 @@ public class generate_particles : MonoBehaviour
                     Quaternion rotation = Quaternion.identity;
                     Vector3 scale = 0.2f * Vector3.one;
                     props.mat = Matrix4x4.TRS(position, rotation, scale);
-                    props.color = Color.Lerp(Color.red, Color.blue, UnityEngine.Random.value);
+                    props.color = Color.red;
                     properties[index] = props;
                 }
             }
         }
         
         meshPropertiesBuffer = new ComputeBuffer(population, MeshProperties.Size());
-        particlesBuffer = new ComputeBuffer(population, 4 * 4 * sizeof(float));
-        unsortedParticlesBuffer = new ComputeBuffer(population, 4 * 4 * sizeof(float));
+        particlesBuffer = new ComputeBuffer(population, 5 * 4 * sizeof(float));
+        unsortedParticlesBuffer = new ComputeBuffer(population, 5 * 4 * sizeof(float));
 
         globalHistogramBuffer = new ComputeBuffer(numOfBins, sizeof(int));
         perBlockSumBuffer = new ComputeBuffer(numOfBins, sizeof(int));
@@ -173,6 +177,7 @@ public class generate_particles : MonoBehaviour
         int Post_solve_kernel = computeShader.FindKernel("Post_solve");
         int Calculate_lambda_kernel = computeShader.FindKernel("Calculate_lambda");
         int Calculate_delta_p_kernel = computeShader.FindKernel("Calculate_delta_p");
+        int Update_constrain_pos_kernel = computeShader.FindKernel("Update_constrain_pos");
         int Calculate_f_pressure_kernel = computeShader.FindKernel("Calculate_f_pressure");
         int Apply_f_pressure_kernel = computeShader.FindKernel("Apply_f_pressure");
         int Histogram_kernel = computeShader.FindKernel("Histogram");
@@ -181,7 +186,7 @@ public class generate_particles : MonoBehaviour
         int Scatter_kernel = computeShader.FindKernel("Scatter");
 
 
-        computeShader.SetFloat("deltaTime",0.01f);
+        computeShader.SetFloat("deltaTime",0.016f);
         computeShader.SetInt("population", population);
         computeShader.SetFloat("inverseRestDensity", inverseRestDensity);
         //computeShader.SetVector("acceleration",new Vector4(0,-10,0,0));
@@ -237,25 +242,34 @@ public class generate_particles : MonoBehaviour
             error += (unsortedParticles[i].position - sortedParticles[i].position).magnitude;
         }
         Debug.Log(error);*/
-        computeShader.SetBuffer(Calculate_lambda_kernel, "particles", particlesBuffer);
-        computeShader.Dispatch(Calculate_lambda_kernel, Mathf.CeilToInt(population / 256f), 1, 1);
+        for(int i = 0; i < solveIteration; i++)
+        {
+            computeShader.SetBuffer(Calculate_lambda_kernel, "globalHistogram", globalHistogramBuffer);
+            computeShader.SetBuffer(Calculate_lambda_kernel, "particles", particlesBuffer);
+            computeShader.Dispatch(Calculate_lambda_kernel, Mathf.CeilToInt(population / 256f), 1, 1);
 
-        computeShader.SetBuffer(Calculate_delta_p_kernel, "particles", particlesBuffer);
-        computeShader.Dispatch(Calculate_delta_p_kernel, Mathf.CeilToInt(population / 256f), 1, 1);
+            computeShader.SetBuffer(Calculate_delta_p_kernel, "globalHistogram", globalHistogramBuffer);
+            computeShader.SetBuffer(Calculate_delta_p_kernel, "particles", particlesBuffer);
+            computeShader.Dispatch(Calculate_delta_p_kernel, Mathf.CeilToInt(population / 256f), 1, 1);
 
+            computeShader.SetBuffer(Update_constrain_pos_kernel, "particles", particlesBuffer);
+            computeShader.Dispatch(Update_constrain_pos_kernel, Mathf.CeilToInt(population / 256f), 1, 1);
+
+        }
         computeShader.SetBuffer(Post_solve_kernel, "particles", particlesBuffer);
         computeShader.SetBuffer(Post_solve_kernel, "unsortedParticles", unsortedParticlesBuffer);
         computeShader.SetBuffer(Post_solve_kernel, "transformation", meshPropertiesBuffer);
         computeShader.SetBuffer(Post_solve_kernel, "globalHistogram", globalHistogramBuffer);
         computeShader.Dispatch(Post_solve_kernel, Mathf.CeilToInt(population / 256f), 1, 1);
 
-        /*//haptic interaction part
+        
+        //haptic interaction part
         computeShader.SetBuffer(Calculate_f_pressure_kernel, "particles", particlesBuffer);
         computeShader.SetBuffer(Calculate_f_pressure_kernel, "hapticOutputForce", hapticOutputBuffer);
         computeShader.Dispatch(Calculate_f_pressure_kernel, Mathf.CeilToInt(population / 256f), 1, 1);
 
         computeShader.SetBuffer(Apply_f_pressure_kernel, "particles", particlesBuffer);
-        computeShader.Dispatch(Apply_f_pressure_kernel, Mathf.CeilToInt(population / 256f), 1, 1);*/
+        computeShader.Dispatch(Apply_f_pressure_kernel, Mathf.CeilToInt(population / 256f), 1, 1);
 
         //hapticOutputBuffer.GetData(result);
         //hapticPressureForce = result[0];
@@ -263,7 +277,7 @@ public class generate_particles : MonoBehaviour
         //Debug.Log(result[0]);
         //find the f_pressure
         //computeShader.Dispatch(Calculate_f_pressure_kernel, Mathf.CeilToInt(population / 256f), 1, 1);
-        
+
 
         //indirect call to render
         instanceMaterial.SetBuffer("_Properties", meshPropertiesBuffer);
