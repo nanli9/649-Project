@@ -1,0 +1,50 @@
+﻿#pragma kernel Scan
+#pragma kernel Scan_per_block_combine
+
+#define THREAD_GROUP_SIZE_X 256
+#define THREAD_GROUP_SIZE_Y 1
+#define THREAD_GROUP_SIZE_Z 1
+
+//just for scan input buffer
+RWStructuredBuffer<int> scanInput;
+RWStructuredBuffer<int> scanPerBlockResult;
+RWStructuredBuffer<int> scanBlockSum;
+
+groupshared int sharedArrayScan[THREAD_GROUP_SIZE_X * 2];
+
+[numthreads(THREAD_GROUP_SIZE_X, THREAD_GROUP_SIZE_Y, THREAD_GROUP_SIZE_Z)]
+void Scan(uint3 globalId : SV_DispatchThreadID, uint3 localId : SV_GroupThreadID, uint3 groupId : SV_GroupID)
+{
+    uint globalIndex = globalId.x;
+    uint localIndex = localId.x;
+    int n = THREAD_GROUP_SIZE_X;
+    
+    int pout = 0, pin = 1;
+    int lastElement = localIndex == 255 ? scanInput[globalIndex] : 0;
+    sharedArrayScan[pout * n + localIndex] = (localIndex > 0) ? scanInput[globalIndex - 1] : 0;
+    GroupMemoryBarrierWithGroupSync();
+    for (int offset = 1; offset < n; offset <<= 1)
+    {
+        pout = 1 - pout;
+        pin = 1 - pout;
+        if (localIndex >= offset)
+            sharedArrayScan[pout * n + localIndex] = sharedArrayScan[pin * n + localIndex] + sharedArrayScan[pin * n + localIndex - offset];
+        else
+            sharedArrayScan[pout * n + localIndex] = sharedArrayScan[pin * n + localIndex];
+        GroupMemoryBarrierWithGroupSync();
+    }
+    scanInput[globalIndex] = sharedArrayScan[pout * n + localIndex];
+    if (localIndex == THREAD_GROUP_SIZE_X - 1)
+        scanBlockSum[groupId.x] = sharedArrayScan[pout * n + localIndex] + lastElement;
+
+}
+
+[numthreads(THREAD_GROUP_SIZE_X, THREAD_GROUP_SIZE_Y, THREAD_GROUP_SIZE_Z)]
+void Scan_per_block_combine(uint3 globalId : SV_DispatchThreadID, uint3 groupId : SV_GroupID)
+{
+    uint globalIndex = globalId.x;
+    uint numOfGroupIndex = groupId.x;
+    
+    scanPerBlockResult[globalIndex] = scanPerBlockResult[globalIndex] + scanBlockSum[numOfGroupIndex];
+
+}

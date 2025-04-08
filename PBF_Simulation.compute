@@ -52,19 +52,22 @@ float3 hapticIntPutForce;
 float deltaTime;
 float inverseRestDensity;
 int population;
+//bin infos
 int min_x, max_x;
 int min_y, max_y;
 int min_z, max_z;
+int num_bin_x;
+int num_bin_y;
+int num_bin_z;
+
+int numOfParticles;
 float3 hapticInteractionPoint;
 float spacing;
 groupshared int force_x;
 groupshared int sharedArrayScan[THREAD_GROUP_SIZE_X * 2];
+
 int find_bin(float3 p)
 {
-    int num_bin_x = int((max_x - min_x) / spacing);
-    int num_bin_y = int((max_y - min_y) / spacing);
-    int num_bin_z = int((max_z - min_z) / spacing);
-
     int x = clamp(int((p.x - min_x) / spacing), 0, num_bin_x - 1);
     int y = clamp(int((p.y - min_y) / spacing), 0, num_bin_y - 1);
     int z = clamp(int((p.z - min_z) / spacing), 0, num_bin_z - 1);
@@ -114,44 +117,11 @@ void Pre_solve(uint3 id : SV_DispatchThreadID)
 void Histogram(uint3 id : SV_DispatchThreadID)
 {
     uint global_index = id.x;
+    if (global_index >= numOfParticles)
+        return;
     int binIndex = find_bin(unsortedParticles[global_index].position);
     InterlockedAdd(globalHistogram[binIndex], 1, unsortedParticles[global_index].flag);
     unsortedParticles[global_index].padding = binIndex;
-}
-[numthreads(THREAD_GROUP_SIZE_X, THREAD_GROUP_SIZE_Y, THREAD_GROUP_SIZE_Z)]
-void Scan(uint3 globalId : SV_DispatchThreadID, uint3 localId : SV_GroupThreadID, uint3 groupId : SV_GroupID)
-{
-    uint globalIndex = globalId.x;
-    uint localIndex = localId.x;
-    int n = THREAD_GROUP_SIZE_X;
-    
-    int pout = 0, pin = 1;
-    int lastElement = localIndex == 255 ? scanInput[globalIndex] : 0;
-    sharedArrayScan[pout * n + localIndex] = (localIndex > 0) ? scanInput[globalIndex - 1] : 0;
-    GroupMemoryBarrierWithGroupSync();
-    for (int offset = 1; offset < n; offset *= 2)
-    {
-        pout = 1 - pout;
-        pin = 1 - pout;
-        if (localIndex >= offset)
-            sharedArrayScan[pout * n + localIndex] = sharedArrayScan[pin * n + localIndex] + sharedArrayScan[pin * n + localIndex - offset];
-        else
-            sharedArrayScan[pout * n + localIndex] = sharedArrayScan[pin * n + localIndex];
-        GroupMemoryBarrierWithGroupSync();
-    }
-    scanInput[globalIndex] = sharedArrayScan[pout * n + localIndex];
-    if (localIndex == THREAD_GROUP_SIZE_X - 1)
-        scanBlockSum[groupId.x] = sharedArrayScan[pout * n + localIndex] + lastElement;
-
-}
-[numthreads(THREAD_GROUP_SIZE_X, THREAD_GROUP_SIZE_Y, THREAD_GROUP_SIZE_Z)]
-void Scan_per_block_combine(uint3 globalId : SV_DispatchThreadID, uint3 groupId : SV_GroupID)
-{
-    uint globalIndex = globalId.x;
-    uint numOfGroupIndex = groupId.x;
-    
-    globalHistogram[globalIndex] = globalHistogram[globalIndex] + scanBlockSum[numOfGroupIndex];
-
 }
 
 [numthreads(THREAD_GROUP_SIZE_X, THREAD_GROUP_SIZE_Y, THREAD_GROUP_SIZE_Z)]
@@ -159,13 +129,13 @@ void Scatter(uint3 id : SV_DispatchThreadID)
 {
     uint global_index = id.x;
     int binIndex = find_bin(unsortedParticles[global_index].position);
-    //int binIndex = global_index % 8000;
+    
     uint globalStartIndex = globalHistogram[binIndex];
     
     particles[globalStartIndex + unsortedParticles[global_index].flag] = unsortedParticles[global_index];
     //check if sorted
-    particles[globalStartIndex + unsortedParticles[global_index].flag].flag = globalStartIndex + unsortedParticles[global_index].flag;
-    unsortedParticles[global_index].flag = particles[globalStartIndex + unsortedParticles[global_index].flag].flag;
+    //particles[globalStartIndex + unsortedParticles[global_index].flag].flag = globalStartIndex + unsortedParticles[global_index].flag;
+    //unsortedParticles[global_index].flag = particles[globalStartIndex + unsortedParticles[global_index].flag].flag;
 }
 [numthreads(THREAD_GROUP_SIZE_X, THREAD_GROUP_SIZE_Y, THREAD_GROUP_SIZE_Z)]
 void Calculate_lambda(uint3 id : SV_DispatchThreadID)
@@ -175,32 +145,30 @@ void Calculate_lambda(uint3 id : SV_DispatchThreadID)
     float w = 0.0f;
     float3 gradient = float3(0.0f, 0.0f, 0.0f);
     
-    int binIndexMinX = (particles[global_index].position - float3(spacing, 0, 0)).x / spacing;
-    int binIndexMaxX = (particles[global_index].position + float3(spacing, 0, 0)).x / spacing;
+    int binIndexMinX = clamp((particles[global_index].position - float3(spacing, 0, 0)).x / spacing, 0, 19);
+    int binIndexMaxX = clamp((particles[global_index].position + float3(spacing, 0, 0)).x / spacing, 0, 19);
     
-    int binIndexMinY = (particles[global_index].position - float3(0, spacing, 0)).y / spacing;
-    int binIndexMaxY = (particles[global_index].position + float3(0, spacing, 0)).y / spacing;
+    int binIndexMinY = clamp((particles[global_index].position - float3(0, spacing, 0)).y / spacing, 0, 19);
+    int binIndexMaxY = clamp((particles[global_index].position + float3(0, spacing, 0)).y / spacing, 0, 19);
     
-    int binIndexMinZ = (particles[global_index].position - float3(0, 0, spacing)).z / spacing;
-    int binIndexMaxZ = (particles[global_index].position + float3(0, 0, spacing)).z / spacing;
+    int binIndexMinZ = clamp((particles[global_index].position - float3(0, 0, spacing)).z / spacing, 0, 19);
+    int binIndexMaxZ = clamp((particles[global_index].position + float3(0, 0, spacing)).z / spacing, 0, 19);
     
     //particles[global_index].flag = 0;
-    
-    for (int i = binIndexMinX; i <= binIndexMaxX; i++)
+    for (int k = binIndexMinZ; k <= binIndexMaxZ; k++)
     {
         for (int j = binIndexMinY; j <= binIndexMaxY; j++)
         {
-            for (int k = binIndexMinZ; k <= binIndexMaxZ; k++)
+            for (int i = binIndexMinX; i <= binIndexMaxX; i++)
             {
-                //int binIndex = find_bin(float3(i,j,k));
-                int binIndex = 20 * 20 * k + 20 * j + i;
+                
+                int binIndex = num_bin_x * num_bin_y * k + num_bin_x * j + i;
                 int start = globalHistogram[binIndex];
                 int end = globalHistogram[binIndex + 1];
                 
                 for (int p = start; p < end; p++)
                 {
                     float3 v = particles[global_index].position - particles[p].position;
-                       //naive implementation
                     if (dot(v, v) <= 1.0f)
                     {
                         density += Poly6Kernel(v);
@@ -215,9 +183,7 @@ void Calculate_lambda(uint3 id : SV_DispatchThreadID)
         }
 
     }
-    //float3 pos = particles[global_index].position;
-    //if(pos.x < 1)
-    //    density = 10000;
+   
     gradient *= inverseRestDensity;
     float C = density * inverseRestDensity - 1.0f;
     float lambda = -C / (w + dot(gradient, gradient) + 200);
@@ -232,25 +198,24 @@ void Calculate_delta_p(uint3 id : SV_DispatchThreadID)
     uint global_index = id.x;
     float3 delta_p = float3(0.0f, 0.0f, 0.0f);
     
-    int binIndexMinX = (particles[global_index].position - float3(spacing, 0, 0)).x / spacing;
-    int binIndexMaxX = (particles[global_index].position + float3(spacing, 0, 0)).x / spacing;
+    int binIndexMinX = clamp((particles[global_index].position - float3(spacing, 0, 0)).x / spacing, 0, 19);
+    int binIndexMaxX = clamp((particles[global_index].position + float3(spacing, 0, 0)).x / spacing, 0, 19);
     
-    int binIndexMinY = (particles[global_index].position - float3(0, spacing, 0)).y / spacing;
-    int binIndexMaxY = (particles[global_index].position + float3(0, spacing, 0)).y / spacing;
+    int binIndexMinY = clamp((particles[global_index].position - float3(0, spacing, 0)).y / spacing, 0, 19);
+    int binIndexMaxY = clamp((particles[global_index].position + float3(0, spacing, 0)).y / spacing, 0, 19);
     
-    int binIndexMinZ = (particles[global_index].position - float3(0, 0, spacing)).z / spacing;
-    int binIndexMaxZ = (particles[global_index].position + float3(0, 0, spacing)).z / spacing;
+    int binIndexMinZ = clamp((particles[global_index].position - float3(0, 0, spacing)).z / spacing, 0, 19);
+    int binIndexMaxZ = clamp((particles[global_index].position + float3(0, 0, spacing)).z / spacing, 0, 19);
     
-    particles[global_index].flag = 0;
+    //particles[global_index].flag = 0;
     
-    for (int i = binIndexMinX; i <= binIndexMaxX; i++)
+    for (int k = binIndexMinZ; k <= binIndexMaxZ; k++)
     {
         for (int j = binIndexMinY; j <= binIndexMaxY; j++)
         {
-            for (int k = binIndexMinZ; k <= binIndexMaxZ; k++)
+            for (int i = binIndexMinX; i <= binIndexMaxX; i++)
             {
-                //int binIndex = find_bin(float3(i,j,k));
-                int binIndex = 20 * 20 * k + 20 * j + i;
+                int binIndex = num_bin_x * num_bin_y * k + num_bin_x * j + i;
                 int start = globalHistogram[binIndex];
                 int end = globalHistogram[binIndex + 1];
                 
@@ -263,7 +228,7 @@ void Calculate_delta_p(uint3 id : SV_DispatchThreadID)
                         float3 gradient = SpikeKernelGradient(v);
                         delta_p += inverseRestDensity * (particles[global_index].lambda + s_corr) * gradient;
                         
-                        particles[global_index].flag += 1;
+                        //particles[global_index].flag += 1;
                         
                     }
                 }
@@ -352,7 +317,6 @@ void Post_solve(uint3 id : SV_DispatchThreadID)
     
     //reset to 0
     //globalHistogramPrefixSum[global_index] = 0;
-    globalHistogram[global_index] = 0;
 }
 
 [numthreads(THREAD_GROUP_SIZE_X, THREAD_GROUP_SIZE_Y, THREAD_GROUP_SIZE_Z)]
@@ -366,8 +330,11 @@ void Calculate_f_pressure(uint3 id : SV_DispatchThreadID)
     hapticOutputForce[0] = float3(0, 0, 0);
     ////calculate the output force
     if (dot(v, v) <= 1.0f)
+    {
         hapticOutputForce[0] += 0.4 * v;//particles[global_index].position;
-    hapticOutputForce[0] = float3(5.0f, 5.0f, 5.0f);
+        //InterlockedAdd(globalHistogram[binIndex], 1, unsortedParticles[global_index].flag);
+    }
+    
 }
 
 [numthreads(THREAD_GROUP_SIZE_X, THREAD_GROUP_SIZE_Y, THREAD_GROUP_SIZE_Z)]
@@ -377,4 +344,6 @@ void Apply_f_pressure(uint3 id : SV_DispatchThreadID)
     
     float3 v = particles[global_index].position - hapticInteractionPoint;
     particles[global_index].acceleration = 3 * (dot(v, v) <= 1.0f) * hapticIntPutForce + (dot(v, v) > 1.0f) * float3(0, -10, 0);
+    
+    globalHistogram[global_index] = 0;
 }
