@@ -9,6 +9,7 @@
 #pragma kernel Scan
 #pragma kernel Scan_per_block_combine
 #pragma kernel Scatter
+#pragma kernel UpdateDensityTexture
 
 #define THREAD_GROUP_SIZE_X 256
 #define THREAD_GROUP_SIZE_Y 1
@@ -43,7 +44,7 @@ RWStructuredBuffer<particle> particles;
 RWStructuredBuffer<particle> unsortedParticles;
 RWStructuredBuffer<MeshProperties> transformation;
 RWStructuredBuffer<int> globalHistogram;
-RWStructuredBuffer<int> globalHistogramPrefixSum;
+//RWStructuredBuffer<int> globalHistogramPrefixSum;
 RWStructuredBuffer<float3> hapticOutputForce;
 //just for scan input buffer
 RWStructuredBuffer<int> scanInput;
@@ -59,6 +60,9 @@ int min_z, max_z;
 int num_bin_x;
 int num_bin_y;
 int num_bin_z;
+
+RWTexture3D<float> DensityMap;
+float3 densityMapSize;
 
 int numOfParticles;
 float3 hapticInteractionPoint;
@@ -346,4 +350,55 @@ void Apply_f_pressure(uint3 id : SV_DispatchThreadID)
     particles[global_index].acceleration = 3 * (dot(v, v) <= 1.0f) * hapticIntPutForce + (dot(v, v) > 1.0f) * float3(0, -10, 0);
     
     globalHistogram[global_index] = 0;
+}
+
+
+[numthreads(8, 8, 8)]
+void UpdateDensityTexture(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= densityMapSize.x || id.y >= densityMapSize.y || id.z >= densityMapSize.z)
+        return;
+
+    float3 texturePos = (float3) id / (densityMapSize - 1.0);
+    //float3 worldPos = (texturePos - 0.5) * boundsSize;
+    float3 worldPos = texturePos * float3(max_x - min_x, max_y - min_y, max_z - min_z);
+    
+    //DensityMap[id] = CalculateDensitiesAtPoint(worldPos)[0];
+    
+    float density = 0;
+    
+    int binIndex = find_bin(worldPos);
+    
+    int binIndexMinX = clamp((worldPos - float3(spacing, 0, 0)).x / spacing, min_x, max_x - 1);
+    int binIndexMaxX = clamp((worldPos + float3(spacing, 0, 0)).x / spacing, min_x, max_x - 1);
+    
+    int binIndexMinY = clamp((worldPos - float3(0, spacing, 0)).y / spacing, min_y, max_y - 1);
+    int binIndexMaxY = clamp((worldPos + float3(0, spacing, 0)).y / spacing, min_y, max_y - 1);
+    
+    int binIndexMinZ = clamp((worldPos - float3(0, 0, spacing)).z / spacing, min_z, max_z - 1);
+    int binIndexMaxZ = clamp((worldPos + float3(0, 0, spacing)).z / spacing, min_z, max_z - 1);
+    
+    for (int k = binIndexMinZ; k <= binIndexMaxZ; k++)
+    {
+        for (int j = binIndexMinY; j <= binIndexMaxY; j++)
+        {
+            for (int i = binIndexMinX; i <= binIndexMaxX; i++)
+            {
+                int binIndex = num_bin_x * num_bin_y * k + num_bin_x * j + i;
+                int start = globalHistogram[binIndex];
+                int end = globalHistogram[binIndex + 1];
+                
+                for (int p = start; p < end; p++)
+                {
+                    float3 v = worldPos - particles[p].position;
+                    density += (dot(v, v) <= 1.0f) * particles[p].density;
+                }
+                
+            }
+
+        }
+
+    }
+    
+    DensityMap[id] = density;
 }
