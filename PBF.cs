@@ -24,9 +24,9 @@ public class PBF : MonoBehaviour
     private HapticPlugin hapticScript;
 
     //bounding box
-    [HideInInspector] public Vector2Int boundingBox_x = new Vector2Int(0, 20);
-    [HideInInspector] public Vector2Int boundingBox_y = new Vector2Int(0, 20);
-    [HideInInspector] public Vector2Int boundingBox_z = new Vector2Int(0, 20);
+    public Vector2Int boundingBox_x = new Vector2Int(0, 30);
+    public Vector2Int boundingBox_y = new Vector2Int(0, 20);
+    public Vector2Int boundingBox_z = new Vector2Int(0, 20);
     Vector3[] result;
 
     public ComputeShader Simulation;
@@ -46,7 +46,7 @@ public class PBF : MonoBehaviour
     private float inverseRestDensity;
     private int numOfBins;
 
-    Vector3 densityTextureDim = new Vector3(32, 32, 32);
+    Vector3 densityTextureDim = new Vector3(64, 64, 64);
     [HideInInspector] public RenderTexture DensityMap;
     // Start is called before the first frame update
     private struct MeshProperties
@@ -120,9 +120,9 @@ public class PBF : MonoBehaviour
                 {
                     particle p = new particle();
                     int index = init_pos_range.y * init_pos_range.z * i + init_pos_range.z * j + k;
-                    float pos_x = 3 + i * init_spacing;
-                    float pos_y = 4 + j * init_spacing;
-                    float pos_z = 3 + k * init_spacing;
+                    float pos_x = 2 + i * init_spacing;
+                    float pos_y = 6 + j * init_spacing;
+                    float pos_z = 0 + k * init_spacing;
                     p.position = new Vector3(pos_x, pos_y, pos_z);
                     p.velocity = new Vector3(0,0.0f,0);
                     p.acceleration = new Vector3(0,-10.0f,0);
@@ -211,16 +211,17 @@ public class PBF : MonoBehaviour
         Simulation.SetVector("densityMapSize", densityTextureDim);
         Simulation.SetFloat("spacing", 1.0f);
         Simulation.SetInt("numOfParticles", population);
-        Simulation.SetInt("min_x", boundingBox_x.x);
-        Simulation.SetInt("max_x", boundingBox_x.y);
-        Simulation.SetInt("min_y", boundingBox_y.x);
-        Simulation.SetInt("max_y", boundingBox_y.y);
-        Simulation.SetInt("min_z", boundingBox_z.x);
-        Simulation.SetInt("max_z", boundingBox_z.y);
 
-        Simulation.SetInt("num_bin_x", (boundingBox_x.y - boundingBox_x.x) / binSpacing);
-        Simulation.SetInt("num_bin_y", (boundingBox_y.y - boundingBox_y.x) / binSpacing);
-        Simulation.SetInt("num_bin_z", (boundingBox_z.y - boundingBox_z.x) / binSpacing);
+        Simulation.SetInt("min_x", boundingBox_x[0]);
+        Simulation.SetInt("max_x", boundingBox_x[1]);
+        Simulation.SetInt("min_y", boundingBox_y[0]);
+        Simulation.SetInt("max_y", boundingBox_y[1]);
+        Simulation.SetInt("min_z", boundingBox_z[0]);
+        Simulation.SetInt("max_z", boundingBox_z[1]);
+
+        Simulation.SetInt("num_bin_x", (boundingBox_x[1] - boundingBox_x[0]) / binSpacing);
+        Simulation.SetInt("num_bin_y", (boundingBox_y[1] - boundingBox_y[0]) / binSpacing);
+        Simulation.SetInt("num_bin_z", (boundingBox_z[1] - boundingBox_z[0]) / binSpacing);
 
 
 

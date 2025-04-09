@@ -111,6 +111,8 @@ float3 SpikeKernelGradient(float3 p)
 void Pre_solve(uint3 id : SV_DispatchThreadID)
 {
     uint global_index = id.x;
+    if (global_index >= numOfParticles)
+        return;
     particles[global_index].prePosition = particles[global_index].position;
     particles[global_index].velocity += particles[global_index].acceleration * deltaTime;
     particles[global_index].position += particles[global_index].velocity * deltaTime;
@@ -132,6 +134,8 @@ void Histogram(uint3 id : SV_DispatchThreadID)
 void Scatter(uint3 id : SV_DispatchThreadID)
 {
     uint global_index = id.x;
+    if (global_index >= numOfParticles)
+        return;
     int binIndex = find_bin(unsortedParticles[global_index].position);
     
     uint globalStartIndex = globalHistogram[binIndex];
@@ -145,18 +149,20 @@ void Scatter(uint3 id : SV_DispatchThreadID)
 void Calculate_lambda(uint3 id : SV_DispatchThreadID)
 {
     uint global_index = id.x;
+    if (global_index >= numOfParticles)
+        return;
     float density = 0.0f;
     float w = 0.0f;
     float3 gradient = float3(0.0f, 0.0f, 0.0f);
     
-    int binIndexMinX = clamp((particles[global_index].position - float3(spacing, 0, 0)).x / spacing, 0, 19);
-    int binIndexMaxX = clamp((particles[global_index].position + float3(spacing, 0, 0)).x / spacing, 0, 19);
+    int binIndexMinX = clamp((particles[global_index].position - float3(spacing, 0, 0)).x / spacing, min_x, max_x - 1);
+    int binIndexMaxX = clamp((particles[global_index].position + float3(spacing, 0, 0)).x / spacing, min_x, max_x - 1);
     
-    int binIndexMinY = clamp((particles[global_index].position - float3(0, spacing, 0)).y / spacing, 0, 19);
-    int binIndexMaxY = clamp((particles[global_index].position + float3(0, spacing, 0)).y / spacing, 0, 19);
+    int binIndexMinY = clamp((particles[global_index].position - float3(0, spacing, 0)).y / spacing, min_y, max_y - 1);
+    int binIndexMaxY = clamp((particles[global_index].position + float3(0, spacing, 0)).y / spacing, min_y, max_y - 1);
     
-    int binIndexMinZ = clamp((particles[global_index].position - float3(0, 0, spacing)).z / spacing, 0, 19);
-    int binIndexMaxZ = clamp((particles[global_index].position + float3(0, 0, spacing)).z / spacing, 0, 19);
+    int binIndexMinZ = clamp((particles[global_index].position - float3(0, 0, spacing)).z / spacing, min_z, max_z - 1);
+    int binIndexMaxZ = clamp((particles[global_index].position + float3(0, 0, spacing)).z / spacing, min_z, max_z - 1);
     
     //particles[global_index].flag = 0;
     for (int k = binIndexMinZ; k <= binIndexMaxZ; k++)
@@ -200,16 +206,18 @@ void Calculate_lambda(uint3 id : SV_DispatchThreadID)
 void Calculate_delta_p(uint3 id : SV_DispatchThreadID)
 {
     uint global_index = id.x;
+    if (global_index >= numOfParticles)
+        return;
     float3 delta_p = float3(0.0f, 0.0f, 0.0f);
     
-    int binIndexMinX = clamp((particles[global_index].position - float3(spacing, 0, 0)).x / spacing, 0, 19);
-    int binIndexMaxX = clamp((particles[global_index].position + float3(spacing, 0, 0)).x / spacing, 0, 19);
+    int binIndexMinX = clamp((particles[global_index].position - float3(spacing, 0, 0)).x / spacing, min_x, max_x - 1);
+    int binIndexMaxX = clamp((particles[global_index].position + float3(spacing, 0, 0)).x / spacing, min_x, max_x - 1);
     
-    int binIndexMinY = clamp((particles[global_index].position - float3(0, spacing, 0)).y / spacing, 0, 19);
-    int binIndexMaxY = clamp((particles[global_index].position + float3(0, spacing, 0)).y / spacing, 0, 19);
+    int binIndexMinY = clamp((particles[global_index].position - float3(0, spacing, 0)).y / spacing, min_y, max_y - 1);
+    int binIndexMaxY = clamp((particles[global_index].position + float3(0, spacing, 0)).y / spacing, min_y, max_y - 1);
     
-    int binIndexMinZ = clamp((particles[global_index].position - float3(0, 0, spacing)).z / spacing, 0, 19);
-    int binIndexMaxZ = clamp((particles[global_index].position + float3(0, 0, spacing)).z / spacing, 0, 19);
+    int binIndexMinZ = clamp((particles[global_index].position - float3(0, 0, spacing)).z / spacing, min_z, max_z - 1);
+    int binIndexMaxZ = clamp((particles[global_index].position + float3(0, 0, spacing)).z / spacing, min_z, max_z - 1);
     
     //particles[global_index].flag = 0;
     
@@ -230,7 +238,7 @@ void Calculate_delta_p(uint3 id : SV_DispatchThreadID)
                     {
                         float s_corr = Scorr(v);
                         float3 gradient = SpikeKernelGradient(v);
-                        delta_p += inverseRestDensity * (particles[global_index].lambda + s_corr) * gradient;
+                        delta_p += inverseRestDensity * (particles[global_index].lambda +  s_corr) * gradient;
                         
                         //particles[global_index].flag += 1;
                         
@@ -246,33 +254,47 @@ void Calculate_delta_p(uint3 id : SV_DispatchThreadID)
     
     float3 pos = particles[global_index].position + delta_p;
     
-    float offset = 0.0f;
+    float force = 1.0f;
     
-    /*
     if (dot(pos - float3(min_x, 0, 0), float3(1, 0, 0)) < 0)
     {
         pos -= dot(pos - float3(min_x, 0, 0), float3(1, 0, 0)) * float3(1, 0, 0);
-        //particles[global_index].velocity.x += 10.0f;
+        particles[global_index].acceleration.x += force;
     }
     
     if (dot(pos - float3(max_x, 0, 0), float3(-1, 0, 0)) < 0)
     {
         pos -= dot(pos - float3(max_x, 0, 0), float3(-1, 0, 0)) * float3(-1, 0, 0);
-        //particles[global_index].velocity.x -= 5.0f;
-        particles[global_index].padding == 1;
+        particles[global_index].acceleration.x -= force;
     }
     
     if (dot(pos - float3(0, min_y, 0), float3(0, 1, 0)) < 0)
+    {
         pos -= dot(pos - float3(0, min_y, 0), float3(0, 1, 0)) * float3(0, 1, 0);
+        particles[global_index].acceleration.y += force;
+    }
     
     if (dot(pos - float3(0, max_y, 0), float3(0, -1, 0)) < 0)
+    {
         pos -= dot(pos - float3(0, max_y, 0), float3(0, -1, 0)) * float3(0, -1, 0);
+        particles[global_index].acceleration.y -= force;
+    }
     
-    */
+    if (dot(pos - float3(0, 0, min_z), float3(0, 0, 1)) < 0)
+    {
+        pos -= dot(pos - float3(0, 0, min_z), float3(0, 0, 1)) * float3(0, 0, 1);
+        particles[global_index].acceleration.z += force;
+    }
     
-    pos.x = clamp(pos.x, min_x - offset, max_x + offset);
-    pos.y = clamp(pos.y, min_y - offset, max_y + offset);
-    pos.z = clamp(pos.z, min_z - offset, max_z + offset);
+    if (dot(pos - float3(0, 0, max_z), float3(0, 0, -1)) < 0)
+    {
+        pos -= dot(pos - float3(0, 0, max_z), float3(0, 0, -1)) * float3(0, 0, -1);
+        particles[global_index].acceleration.z -= force;
+    }
+    
+    //pos.x = clamp(pos.x, min_x, max_x);
+    //pos.y = clamp(pos.y, min_y, max_y);
+    //pos.z = clamp(pos.z, min_z, max_z);
     
     particles[global_index].delta_p = pos - particles[global_index].position;
 }
@@ -281,6 +303,8 @@ void Calculate_delta_p(uint3 id : SV_DispatchThreadID)
 void Update_constrain_pos(uint3 id : SV_DispatchThreadID)
 {
     uint global_index = id.x;
+    if (global_index >= numOfParticles)
+        return;
     float3 pos = particles[global_index].position + particles[global_index].delta_p;
     particles[global_index].position = pos;
     
@@ -296,11 +320,13 @@ void Update_constrain_pos(uint3 id : SV_DispatchThreadID)
 void Post_solve(uint3 id : SV_DispatchThreadID)
 {
     uint global_index = id.x;
+    if (global_index >= numOfParticles)
+        return;
     
     float3 v = 1.0 * (particles[global_index].position - particles[global_index].prePosition) / deltaTime;
     float speed = length(v);
-    if(speed > 5.0f)
-        v = 5.0f * normalize(v);
+    if(speed > 10.0f)
+        v = 10.0f * normalize(v);
     
     particles[global_index].velocity = v;
     
@@ -310,14 +336,14 @@ void Post_solve(uint3 id : SV_DispatchThreadID)
     transformation[global_index].mat[1][3] = particles[global_index].position[1];
     transformation[global_index].mat[2][3] = particles[global_index].position[2];
     
-    
+    /*
     if (particles[global_index].padding == 1)
     {
         transformation[global_index].mat[0][3] = 100000000;
         transformation[global_index].mat[1][3] = 10000000;
         transformation[global_index].mat[2][3] = 10000000;
     }
-    
+    */
     
     //reset to 0
     //globalHistogramPrefixSum[global_index] = 0;
@@ -327,6 +353,8 @@ void Post_solve(uint3 id : SV_DispatchThreadID)
 void Calculate_f_pressure(uint3 id : SV_DispatchThreadID)
 {
     uint global_index = id.x;
+    if (global_index >= numOfParticles)
+        return;
     float3 pressure_force = float3(0,0,0);
     float density = 0.0f;
     float3 gradient = float3(0.0f, 0.0f, 0.0f);
@@ -345,9 +373,10 @@ void Calculate_f_pressure(uint3 id : SV_DispatchThreadID)
 void Apply_f_pressure(uint3 id : SV_DispatchThreadID)
 {
     uint global_index = id.x;
-    
+    if (global_index >= numOfParticles)
+        return;
     float3 v = particles[global_index].position - hapticInteractionPoint;
-    particles[global_index].acceleration = 3 * (dot(v, v) <= 1.0f) * hapticIntPutForce + (dot(v, v) > 1.0f) * float3(0, -10, 0);
+    particles[global_index].acceleration += 3 * (dot(v, v) <= 1.0f) * hapticIntPutForce + (dot(v, v) > 1.0f) * float3(0, -10, 0);
     
     globalHistogram[global_index] = 0;
 }
