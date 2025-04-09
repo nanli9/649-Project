@@ -55,6 +55,10 @@
 			{
 				float3 invRayDir = 1 / rayDir;
 
+				//float offset = 1;
+				//boundsMin += float3(offset,offset,offset);
+				//boundsMax -= float3(offset,offset,offset);
+
                 float3 t0 = (boundsMin - rayOrigin) * invRayDir;
                 float3 t1 = (boundsMax - rayOrigin) * invRayDir;
                 float3 tmin = min(t0, t1);
@@ -100,7 +104,7 @@
 				for (float dst = 0; dst < boundsDstInfo[1] - TinyNudge * 2; dst += stepSize)
 				{
 					float3 samplePos = entryPoint + rayDir * dst;
-					float densityAlongStep = SampleDensity(samplePos) + densityMultiplier * stepSize;
+					float densityAlongStep = SampleDensity(samplePos) * densityMultiplier * stepSize;
 					densityAlongViewRay += densityAlongStep;
 				}
 

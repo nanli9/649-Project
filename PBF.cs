@@ -120,9 +120,9 @@ public class PBF : MonoBehaviour
                 {
                     particle p = new particle();
                     int index = init_pos_range.y * init_pos_range.z * i + init_pos_range.z * j + k;
-                    float pos_x = 3 + i * init_spacing;
-                    float pos_y = 4 + j * init_spacing;
-                    float pos_z = 3 + k * init_spacing;
+                    float pos_x = 2 + i * init_spacing;
+                    float pos_y = 3 + j * init_spacing;
+                    float pos_z = 0 + k * init_spacing;
                     p.position = new Vector3(pos_x, pos_y, pos_z);
                     p.velocity = new Vector3(0,0.0f,0);
                     p.acceleration = new Vector3(0,-10.0f,0);
