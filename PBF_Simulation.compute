@@ -325,8 +325,8 @@ void Post_solve(uint3 id : SV_DispatchThreadID)
     
     float3 v = 1.0 * (particles[global_index].position - particles[global_index].prePosition) / deltaTime;
     float speed = length(v);
-    if(speed > 10.0f)
-        v = 10.0f * normalize(v);
+    if(speed > 5.0f)
+        v = 5.0f * normalize(v);
     
     particles[global_index].velocity = v;
     
@@ -363,8 +363,9 @@ void Calculate_f_pressure(uint3 id : SV_DispatchThreadID)
     ////calculate the output force
     if (dot(v, v) <= 1.0f)
     {
-        hapticOutputForce[0] += 0.4 * v;//particles[global_index].position;
-        //InterlockedAdd(globalHistogram[binIndex], 1, unsortedParticles[global_index].flag);
+        //hapticOutputForce[0] += 0.4 * v;//particles[global_index].position;
+        float P_i = 0.1 * (particles[global_index].density - 1.0 / inverseRestDensity);
+        hapticOutputForce[0] -= P_i* SpikeKernelGradient(v);
     }
     
 }

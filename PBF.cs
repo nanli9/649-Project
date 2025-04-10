@@ -16,9 +16,9 @@ public class PBF : MonoBehaviour
     public Material instanceMaterial;
     public Mesh sphereMesh;
     //haptic
-    private Vector3 hapticInteractionPoint; //read only
-    private Vector3 hapticPressureForce; // what I will update
-    private Vector3 hapticInForce; //read only
+    [HideInInspector] public Vector3 hapticInteractionPoint; //read only
+    [HideInInspector] public Vector3 hapticPressureForce; // what I will update
+    [HideInInspector] public Vector3 hapticInForce; //read only
 
     public GameObject hapticPluginObject;
     private HapticPlugin hapticScript;
@@ -183,8 +183,8 @@ public class PBF : MonoBehaviour
     void Update()
     {
         //retrieve the data from haptic device
-        //hapticInteractionPoint = hapticScript.Mapped_HPos;
-        //hapticInForce = hapticScript.forceInput;
+        hapticInteractionPoint = hapticScript.Mapped_HPos;
+        hapticInForce = hapticScript.forceInput;
 
         //dispatch kernels
         int Pre_solve_kernel = Simulation.FindKernel("Pre_solve");
@@ -304,7 +304,7 @@ public class PBF : MonoBehaviour
         Simulation.Dispatch(Apply_f_pressure_kernel, Mathf.CeilToInt(population / 256f), 1, 1);
 
         hapticOutputBuffer.GetData(result);
-        hapticPressureForce = result[0];
+        hapticPressureForce = result[0] *3;
         //result[0] = new Vector3(0, 0, 0);
 
         //indirect call to render
