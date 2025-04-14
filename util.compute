@@ -1,5 +1,6 @@
 ﻿#pragma kernel Scan
 #pragma kernel Scan_per_block_combine
+#pragma kernel Reduce
 
 #define THREAD_GROUP_SIZE_X 256
 #define THREAD_GROUP_SIZE_Y 1
@@ -10,7 +11,11 @@ RWStructuredBuffer<int> scanInput;
 RWStructuredBuffer<int> scanPerBlockResult;
 RWStructuredBuffer<int> scanBlockSum;
 
+//for reduce input buffer
+RWStructuredBuffer<float3> reduceInput;
+
 groupshared int sharedArrayScan[THREAD_GROUP_SIZE_X * 2];
+groupshared float3 sharedArrayReduce[THREAD_GROUP_SIZE_X];
 
 [numthreads(THREAD_GROUP_SIZE_X, THREAD_GROUP_SIZE_Y, THREAD_GROUP_SIZE_Z)]
 void Scan(uint3 globalId : SV_DispatchThreadID, uint3 localId : SV_GroupThreadID, uint3 groupId : SV_GroupID)
@@ -43,8 +48,31 @@ void Scan(uint3 globalId : SV_DispatchThreadID, uint3 localId : SV_GroupThreadID
 void Scan_per_block_combine(uint3 globalId : SV_DispatchThreadID, uint3 groupId : SV_GroupID)
 {
     uint globalIndex = globalId.x;
+
     uint numOfGroupIndex = groupId.x;
     
     scanPerBlockResult[globalIndex] = scanPerBlockResult[globalIndex] + scanBlockSum[numOfGroupIndex];
 
+}
+
+
+[numthreads(THREAD_GROUP_SIZE_X, THREAD_GROUP_SIZE_Y, THREAD_GROUP_SIZE_Z)]
+void Reduce(uint3 globalId : SV_DispatchThreadID, uint3 localId : SV_GroupThreadID, uint3 groupId : SV_GroupID)
+{
+    uint globalIndex = globalId.x;
+    uint localIndex = localId.x;
+    uint numOfGroupIndex = groupId.x;
+    
+    sharedArrayReduce[localIndex] = reduceInput[globalIndex];
+    GroupMemoryBarrierWithGroupSync();
+    
+    for (int offset = THREAD_GROUP_SIZE_X / 2; offset > 0; offset >>= 1)
+    {
+        if (localIndex < offset)
+            sharedArrayReduce[localIndex] = sharedArrayReduce[localIndex] + sharedArrayReduce[localIndex + offset];
+        GroupMemoryBarrierWithGroupSync();
+    }
+    
+    if (localIndex == 0)
+        reduceInput[numOfGroupIndex] = sharedArrayReduce[localIndex];
 }
