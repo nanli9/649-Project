@@ -47,6 +47,7 @@ public class PBF : MonoBehaviour
     private int population;
     private float inverseRestDensity;
     private int numOfBins;
+    private float hapticInteractionPointDensity;
 
     //private const int MAX_NUM_NEIGHBOR = 70;
     Vector3 densityTextureDim = new Vector3(64, 64, 64);
@@ -123,7 +124,7 @@ public class PBF : MonoBehaviour
                     particle p = new particle();
                     int index = init_pos_range.y * init_pos_range.z * i + init_pos_range.z * j + k;
                     float pos_x = 2 + i * init_spacing;
-                    float pos_y = 6 + j * init_spacing;
+                    float pos_y = 2 + j * init_spacing;
                     float pos_z = 0 + k * init_spacing;
                     p.position = new Vector3(pos_x, pos_y, pos_z);
                     p.velocity = new Vector3(0,0.0f,0);
@@ -186,8 +187,10 @@ public class PBF : MonoBehaviour
     void Update()
     {
         //retrieve the data from haptic device
-        //hapticInteractionPoint = hapticScript.Mapped_HPos;
-        //hapticInForce = hapticScript.forceInput;
+        hapticInteractionPoint = hapticScript.Mapped_HPos;
+        hapticInForce = hapticScript.forceInput;
+        hapticInVelocity = hapticScript.CurrentVelocity;
+        Debug.Log(hapticInVelocity);
 
         //dispatch kernels
         int Pre_solve_kernel = Simulation.FindKernel("Pre_solve");
@@ -195,6 +198,7 @@ public class PBF : MonoBehaviour
         int Calculate_lambda_kernel = Simulation.FindKernel("Calculate_lambda");
         int Calculate_delta_p_kernel = Simulation.FindKernel("Calculate_delta_p");
         int Update_constrain_pos_kernel = Simulation.FindKernel("Update_constrain_pos");
+        int Calculate_haptic_density_kernel = Simulation.FindKernel("Calculate_haptic_density");
         int Calculate_f_pressure_kernel = Simulation.FindKernel("Calculate_f_pressure");
         int Calculate_f_viscosity_kernel = Simulation.FindKernel("Calculate_f_viscosity");
         int Apply_f_pressure_kernel = Simulation.FindKernel("Apply_f_pressure");
@@ -310,13 +314,28 @@ public class PBF : MonoBehaviour
         Simulation.Dispatch(UpdateDensityTexture_kernel, Mathf.CeilToInt(densityTextureDim[0] / 8), Mathf.CeilToInt(densityTextureDim[1] / 8), Mathf.CeilToInt(densityTextureDim[2] / 8));
 
         //haptic interaction part
-        Simulation.SetFloat("hapticInteractionPointPressure", 1.0f);
+        Simulation.SetBuffer(Calculate_haptic_density_kernel, "particles", unsortedParticlesBuffer);
+        Simulation.SetBuffer(Calculate_haptic_density_kernel, "hapticOutputForce", hapticOutputBuffer);
+        Simulation.Dispatch(Calculate_haptic_density_kernel, Mathf.CeilToInt(population / 256f), 1, 1);
+
+        //per block result
+        Utility.SetBuffer(Reduce_kernel, "reduceInput", hapticOutputBuffer);
+        Utility.Dispatch(Reduce_kernel, Mathf.CeilToInt(population / 256f), 1, 1);
+
+        //final result
+        Utility.SetBuffer(Reduce_kernel, "reduceInput", hapticOutputBuffer);
+        Utility.Dispatch(Reduce_kernel, Mathf.CeilToInt(population / (256f * 256f)), 1, 1);
+
+        hapticOutputBuffer.GetData(result, 0, 0, 3);
+        hapticInteractionPointDensity = result[0];
+        //Debug.Log(hapticInteractionPointDensity);
+
+        Simulation.SetFloat("hapticInteractionPointDensity", hapticInteractionPointDensity);
         Simulation.SetBuffer(Calculate_f_pressure_kernel, "particles", unsortedParticlesBuffer);
         Simulation.SetBuffer(Calculate_f_pressure_kernel, "hapticOutputForce", hapticOutputBuffer);
         Simulation.Dispatch(Calculate_f_pressure_kernel, Mathf.CeilToInt(population / 256f), 1, 1);
 
-
-        //Simulation.SetVector("hapticInteractionPointPressure", hapticInVelocity);
+        //Simulation.SetVector("hapticInteractionPointDensity", hapticInVelocity);
         //Simulation.SetBuffer(Calculate_f_viscosity_kernel, "particles", unsortedParticlesBuffer);
         //Simulation.SetBuffer(Calculate_f_viscosity_kernel, "hapticOutputForce", hapticOutputBuffer);
         //Simulation.Dispatch(Calculate_f_viscosity_kernel, Mathf.CeilToInt(population / 256f), 1, 1);
@@ -331,6 +350,8 @@ public class PBF : MonoBehaviour
 
         hapticOutputBuffer.GetData(result, 0, 0, 3);
         hapticPressureForce = new Vector3(result[0], result[1], result[2]);
+        //Debug.Log(hapticPressureForce);
+
 
         Simulation.SetBuffer(Apply_f_pressure_kernel, "particles", unsortedParticlesBuffer);
         //reset the histogram buffer value to 0

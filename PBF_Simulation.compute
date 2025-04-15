@@ -3,12 +3,11 @@
 #pragma kernel Calculate_delta_p
 #pragma kernel Update_constrain_pos
 #pragma kernel Post_solve
+#pragma kernel Calculate_haptic_density
 #pragma kernel Calculate_f_pressure
 #pragma kernel Calculate_f_viscosity
 #pragma kernel Apply_f_pressure
 #pragma kernel Histogram
-#pragma kernel Scan
-#pragma kernel Scan_per_block_combine
 #pragma kernel Scatter
 #pragma kernel UpdateDensityTexture
 #pragma kernel FindNeighborList
@@ -70,7 +69,7 @@ float3 densityMapSize;
 
 int numOfParticles;
 float3 hapticInteractionPoint;
-float hapticInteractionPointPressure;
+float hapticInteractionPointDensity;
 float3 hapticInVelocity;
 
 float spacing;
@@ -424,18 +423,28 @@ void Post_solve(uint3 id : SV_DispatchThreadID)
     transformation[global_index].mat[0][3] = particles[global_index].position[0];
     transformation[global_index].mat[1][3] = particles[global_index].position[1];
     transformation[global_index].mat[2][3] = particles[global_index].position[2];
-    
-    /*
-    if (particles[global_index].padding == 1)
-    {
-        transformation[global_index].mat[0][3] = 100000000;
-        transformation[global_index].mat[1][3] = 10000000;
-        transformation[global_index].mat[2][3] = 10000000;
-    }
-    */
-    
     //reset to 0
     //globalHistogramPrefixSum[global_index] = 0;
+}
+[numthreads(THREAD_GROUP_SIZE_X, THREAD_GROUP_SIZE_Y, THREAD_GROUP_SIZE_Z)]
+void Calculate_haptic_density(uint3 id : SV_DispatchThreadID)
+{
+    uint global_index = id.x;
+    if (global_index >= numOfParticles)
+        return;
+    float hapticDensity = 0.0f;
+
+    hapticOutputForce[global_index] = float3(0, 0, 0);
+
+    float3 v = particles[global_index].position - hapticInteractionPoint;
+
+    if (dot(v, v) <= 1.0f)
+    {
+        hapticDensity += Poly6Kernel(v);
+    }
+
+    hapticOutputForce[global_index].x = hapticDensity;
+
 }
 
 [numthreads(THREAD_GROUP_SIZE_X, THREAD_GROUP_SIZE_Y, THREAD_GROUP_SIZE_Z)]
@@ -451,18 +460,24 @@ void Calculate_f_pressure(uint3 id : SV_DispatchThreadID)
     
     float3 v = particles[global_index].position - hapticInteractionPoint;
     
-    float k = 0.1;
+    float k = 0.0004;
+    float restDensity = 15.0f;
+
+    //hapticInteractionPointDensity = clamp(hapticInteractionPointDensity, 7.0f , 20.0f);
+
+    float P = k * (hapticInteractionPointDensity - restDensity);
     ////calculate the output force
     if (dot(v, v) <= 1.0f)
     {
         //hapticOutputForce[0] += 0.4 * v;//particles[global_index].position;
-        float P_i = k * (particles[global_index].density - 1.0 / inverseRestDensity);
-        pressure_force -= 0.5f * (P_i + hapticInteractionPointPressure) * SpikeKernelGradient(v);
+        float P_i = k * (particles[global_index].density - restDensity);
+        pressure_force -= 0.5f * (P_i + P) * SpikeKernelGradient(v);
     }
     
     hapticOutputForce[global_index] = pressure_force;
 
 }
+
 
 [numthreads(THREAD_GROUP_SIZE_X, THREAD_GROUP_SIZE_Y, THREAD_GROUP_SIZE_Z)]
 void Calculate_f_viscosity(uint3 id : SV_DispatchThreadID)
@@ -480,7 +495,7 @@ void Calculate_f_viscosity(uint3 id : SV_DispatchThreadID)
     {
         //hapticOutputForce[0] += 0.4 * v;//particles[global_index].position;
         float P_i = k * (particles[global_index].density - 1.0 / inverseRestDensity);
-        viscosity_force -= 0.5f * (P_i + hapticInteractionPointPressure) * SpikeKernelGradient(v);
+        viscosity_force -= 0.5f * (P_i + hapticInteractionPointDensity) * SpikeKernelGradient(v);
     }
     
     hapticOutputForce[global_index] = viscosity_force;
@@ -493,7 +508,7 @@ void Apply_f_pressure(uint3 id : SV_DispatchThreadID)
     if (global_index >= numOfParticles)
         return;
     float3 v = particles[global_index].position - hapticInteractionPoint;
-    particles[global_index].acceleration += 3 * (dot(v, v) <= 1.0f) * hapticIntPutForce + (dot(v, v) > 1.0f) * float3(0, -10, 0);
+    particles[global_index].acceleration += 5 * (dot(v, v) <= 1.0f) * hapticIntPutForce + (dot(v, v) > 1.0f) * float3(0, -10, 0);
     
     globalHistogram[global_index] = 0;
 }
