@@ -45,6 +45,8 @@ public class FluidRenderer : MonoBehaviour
         Vector3 BoundsSize = new Vector3(boundsX, boundsY, boundsZ);
         raymarchMat.SetVector("boundsSize", BoundsSize);
         raymarchMat.SetFloat("stepSize", stepSize);
+        raymarchMat.SetFloat("hapticPointRadius", 0.2f);
+        raymarchMat.SetVector("hapticPointPos", pbf.hapticInteractionPoint);
         raymarchMat.SetFloat("densityMultiplier", densityMultiplier);
         raymarchMat.SetFloat("volumeValueOffset", densityOffset);
     }

@@ -16,18 +16,19 @@ public class PBF : MonoBehaviour
     public Material instanceMaterial;
     public Mesh sphereMesh;
     //haptic
-    private Vector3 hapticInteractionPoint; //read only
-    private Vector3 hapticPressureForce; // what I will update
-    private Vector3 hapticInForce; //read only
-
+    [HideInInspector] public Vector3 hapticInteractionPoint; //read only
+    [HideInInspector] public Vector3 hapticPressureForce; // what I will update
+    [HideInInspector] public Vector3 hapticInForce; //read only
+    [HideInInspector] public Vector3 hapticInVelocity; //read only
+    private Vector3 lastHapticPressureForce;
     public GameObject hapticPluginObject;
     private HapticPlugin hapticScript;
 
     //bounding box
-    [HideInInspector] public Vector2Int boundingBox_x = new Vector2Int(0, 20);
-    [HideInInspector] public Vector2Int boundingBox_y = new Vector2Int(0, 20);
-    [HideInInspector] public Vector2Int boundingBox_z = new Vector2Int(0, 20);
-    Vector3[] result;
+    public Vector2Int boundingBox_x = new Vector2Int(0, 30);
+    public Vector2Int boundingBox_y = new Vector2Int(0, 20);
+    public Vector2Int boundingBox_z = new Vector2Int(0, 20);
+    float[] result;
 
     public ComputeShader Simulation;
     public ComputeShader Utility;
@@ -41,12 +42,15 @@ public class PBF : MonoBehaviour
     private ComputeBuffer hapticOutputBuffer;  // Buffer for hapticOutput force
     private ComputeBuffer binBuffer;  // Buffer for histogram calculation
     private ComputeBuffer argsBuffer;
+    private ComputeBuffer neighborListBuffer;
     private Bounds bounds;
     private int population;
     private float inverseRestDensity;
     private int numOfBins;
+    private float hapticInteractionPointDensity;
 
-    Vector3 densityTextureDim = new Vector3(32, 32, 32);
+    //private const int MAX_NUM_NEIGHBOR = 70;
+    Vector3 densityTextureDim = new Vector3(64, 64, 64);
     [HideInInspector] public RenderTexture DensityMap;
     // Start is called before the first frame update
     private struct MeshProperties
@@ -90,7 +94,7 @@ public class PBF : MonoBehaviour
     private void InitializeBuffers()
     {
         population = init_pos_range.x * init_pos_range.y * init_pos_range.z;
-        result = new Vector3[1];
+        result = new float[3];
         numOfBins = (boundingBox_x[1] - boundingBox_x[0]) / binSpacing *
                         (boundingBox_y[1] - boundingBox_y[0]) / binSpacing *
                         (boundingBox_z[1] - boundingBox_z[0]) / binSpacing + 1;
@@ -108,7 +112,6 @@ public class PBF : MonoBehaviour
         // Initialize buffer with the given population.
         MeshProperties[] properties = new MeshProperties[population];
         particle[] particles = new particle[population];
-        Vector3[] hapticOutput = new Vector3[1];
         int[] binCounts = new int[numOfBins];
         Array.Clear(binCounts, 0, binCounts.Length);
         //initialize the position of the particles 
@@ -121,7 +124,7 @@ public class PBF : MonoBehaviour
                     particle p = new particle();
                     int index = init_pos_range.y * init_pos_range.z * i + init_pos_range.z * j + k;
                     float pos_x = 2 + i * init_spacing;
-                    float pos_y = 3 + j * init_spacing;
+                    float pos_y = 2 + j * init_spacing;
                     float pos_z = 0 + k * init_spacing;
                     p.position = new Vector3(pos_x, pos_y, pos_z);
                     p.velocity = new Vector3(0,0.0f,0);
@@ -140,22 +143,25 @@ public class PBF : MonoBehaviour
                 }
             }
         }
-        
+        lastHapticPressureForce = new Vector3(0, 0, 0);
+        hapticPressureForce = new Vector3(0, 0, 0);
+
         meshPropertiesBuffer = new ComputeBuffer(population, MeshProperties.Size());
         particlesBuffer = new ComputeBuffer(population, 5 * 4 * sizeof(float));
         unsortedParticlesBuffer = new ComputeBuffer(population, 5 * 4 * sizeof(float));
 
+        //neighborListBuffer = new ComputeBuffer(population * MAX_NUM_NEIGHBOR, sizeof(int));
+
         globalHistogramBuffer = new ComputeBuffer(numOfBins, sizeof(int));
         perBlockSumBuffer = new ComputeBuffer(numOfBins, sizeof(int));
         //globalHistogramPrefixSumBuffer = new ComputeBuffer(numOfBins, sizeof(int));
-        hapticOutputBuffer = new ComputeBuffer(1, 3 * sizeof(float));
+        hapticOutputBuffer = new ComputeBuffer(population, 3 * sizeof(float));
 
         binBuffer = new ComputeBuffer(1, 3 * sizeof(float));
 
         meshPropertiesBuffer.SetData(properties);
         particlesBuffer.SetData(particles);
         unsortedParticlesBuffer.SetData(particles);
-        hapticOutputBuffer.SetData(hapticOutput);
 
         globalHistogramBuffer.SetData(binCounts);
         //globalHistogramPrefixSumBuffer.SetData(binCounts);
@@ -183,8 +189,10 @@ public class PBF : MonoBehaviour
     void Update()
     {
         //retrieve the data from haptic device
-        //hapticInteractionPoint = hapticScript.Mapped_HPos;
-        //hapticInForce = hapticScript.forceInput;
+        hapticInteractionPoint = hapticScript.Mapped_HPos;
+        hapticInForce = hapticScript.forceInput;
+        hapticInVelocity = hapticScript.CurrentVelocity;
+        //Debug.Log(hapticInVelocity);
 
         //dispatch kernels
         int Pre_solve_kernel = Simulation.FindKernel("Pre_solve");
@@ -192,12 +200,17 @@ public class PBF : MonoBehaviour
         int Calculate_lambda_kernel = Simulation.FindKernel("Calculate_lambda");
         int Calculate_delta_p_kernel = Simulation.FindKernel("Calculate_delta_p");
         int Update_constrain_pos_kernel = Simulation.FindKernel("Update_constrain_pos");
+        int Calculate_haptic_density_kernel = Simulation.FindKernel("Calculate_haptic_density");
         int Calculate_f_pressure_kernel = Simulation.FindKernel("Calculate_f_pressure");
+        int Calculate_f_viscosity_kernel = Simulation.FindKernel("Calculate_f_viscosity");
         int Apply_f_pressure_kernel = Simulation.FindKernel("Apply_f_pressure");
         int Histogram_kernel = Simulation.FindKernel("Histogram");
         int Scan_kernel = Utility.FindKernel("Scan");
         int Scan_combine_kernel = Utility.FindKernel("Scan_per_block_combine");
+        int Reduce_kernel = Utility.FindKernel("Reduce");
+
         int Scatter_kernel = Simulation.FindKernel("Scatter");
+        //int FindNeighborList_kernel = Simulation.FindKernel("FindNeighborList");
 
         int UpdateDensityTexture_kernel = Simulation.FindKernel("UpdateDensityTexture");
 
@@ -211,16 +224,19 @@ public class PBF : MonoBehaviour
         Simulation.SetVector("densityMapSize", densityTextureDim);
         Simulation.SetFloat("spacing", 1.0f);
         Simulation.SetInt("numOfParticles", population);
-        Simulation.SetInt("min_x", boundingBox_x.x);
-        Simulation.SetInt("max_x", boundingBox_x.y);
-        Simulation.SetInt("min_y", boundingBox_y.x);
-        Simulation.SetInt("max_y", boundingBox_y.y);
-        Simulation.SetInt("min_z", boundingBox_z.x);
-        Simulation.SetInt("max_z", boundingBox_z.y);
 
-        Simulation.SetInt("num_bin_x", (boundingBox_x.y - boundingBox_x.x) / binSpacing);
-        Simulation.SetInt("num_bin_y", (boundingBox_y.y - boundingBox_y.x) / binSpacing);
-        Simulation.SetInt("num_bin_z", (boundingBox_z.y - boundingBox_z.x) / binSpacing);
+        //Simulation.SetInt("MAX_NUM_NEIGHBOR", MAX_NUM_NEIGHBOR);
+
+        Simulation.SetInt("min_x", boundingBox_x[0]);
+        Simulation.SetInt("max_x", boundingBox_x[1]);
+        Simulation.SetInt("min_y", boundingBox_y[0]);
+        Simulation.SetInt("max_y", boundingBox_y[1]);
+        Simulation.SetInt("min_z", boundingBox_z[0]);
+        Simulation.SetInt("max_z", boundingBox_z[1]);
+
+        Simulation.SetInt("num_bin_x", (boundingBox_x[1] - boundingBox_x[0]) / binSpacing);
+        Simulation.SetInt("num_bin_y", (boundingBox_y[1] - boundingBox_y[0]) / binSpacing);
+        Simulation.SetInt("num_bin_z", (boundingBox_z[1] - boundingBox_z[0]) / binSpacing);
 
 
 
@@ -254,6 +270,12 @@ public class PBF : MonoBehaviour
         //Simulation.SetBuffer(Scatter_kernel, "globalHistogramPrefixSum", globalHistogramPrefixSumBuffer);
         Simulation.Dispatch(Scatter_kernel, Mathf.CeilToInt(population / 256f), 1, 1);
 
+
+        //Simulation.SetBuffer(FindNeighborList_kernel, "particles", particlesBuffer);
+        //Simulation.SetBuffer(FindNeighborList_kernel, "globalHistogram", globalHistogramBuffer);
+        //Simulation.SetBuffer(FindNeighborList_kernel, "neighborList", neighborListBuffer);
+        //Simulation.Dispatch(FindNeighborList_kernel, Mathf.CeilToInt(population / 256f), 1, 1);
+
         /*particle[] unsortedParticles = new particle[population];
         particle[] sortedParticles = new particle[population];
         unsortedParticlesBuffer.GetData(unsortedParticles);
@@ -266,14 +288,16 @@ public class PBF : MonoBehaviour
             error += (unsortedParticles[i].position - sortedParticles[i].position).magnitude;
         }
         Debug.Log(error);*/
-        for(int i = 0; i < solveIteration; i++)
+        for (int i = 0; i < solveIteration; i++)
         {
             Simulation.SetBuffer(Calculate_lambda_kernel, "globalHistogram", globalHistogramBuffer);
             Simulation.SetBuffer(Calculate_lambda_kernel, "particles", particlesBuffer);
+            //Simulation.SetBuffer(Calculate_lambda_kernel, "neighborList", neighborListBuffer);
             Simulation.Dispatch(Calculate_lambda_kernel, Mathf.CeilToInt(population / 256f), 1, 1);
 
             Simulation.SetBuffer(Calculate_delta_p_kernel, "globalHistogram", globalHistogramBuffer);
             Simulation.SetBuffer(Calculate_delta_p_kernel, "particles", particlesBuffer);
+            //Simulation.SetBuffer(Calculate_delta_p_kernel, "neighborList", neighborListBuffer);
             Simulation.Dispatch(Calculate_delta_p_kernel, Mathf.CeilToInt(population / 256f), 1, 1);
 
             Simulation.SetBuffer(Update_constrain_pos_kernel, "particles", particlesBuffer);
@@ -292,9 +316,45 @@ public class PBF : MonoBehaviour
         Simulation.Dispatch(UpdateDensityTexture_kernel, Mathf.CeilToInt(densityTextureDim[0] / 8), Mathf.CeilToInt(densityTextureDim[1] / 8), Mathf.CeilToInt(densityTextureDim[2] / 8));
 
         //haptic interaction part
+        Simulation.SetBuffer(Calculate_haptic_density_kernel, "particles", unsortedParticlesBuffer);
+        Simulation.SetBuffer(Calculate_haptic_density_kernel, "hapticOutputForce", hapticOutputBuffer);
+        Simulation.Dispatch(Calculate_haptic_density_kernel, Mathf.CeilToInt(population / 256f), 1, 1);
+
+        //per block result
+        Utility.SetBuffer(Reduce_kernel, "reduceInput", hapticOutputBuffer);
+        Utility.Dispatch(Reduce_kernel, Mathf.CeilToInt(population / 256f), 1, 1);
+
+        //final result
+        Utility.SetBuffer(Reduce_kernel, "reduceInput", hapticOutputBuffer);
+        Utility.Dispatch(Reduce_kernel, Mathf.CeilToInt(population / (256f * 256f)), 1, 1);
+
+        hapticOutputBuffer.GetData(result, 0, 0, 3);
+        hapticInteractionPointDensity = result[0];
+        //Debug.Log(hapticInteractionPointDensity);
+
+        Simulation.SetFloat("hapticInteractionPointDensity", hapticInteractionPointDensity);
         Simulation.SetBuffer(Calculate_f_pressure_kernel, "particles", unsortedParticlesBuffer);
         Simulation.SetBuffer(Calculate_f_pressure_kernel, "hapticOutputForce", hapticOutputBuffer);
         Simulation.Dispatch(Calculate_f_pressure_kernel, Mathf.CeilToInt(population / 256f), 1, 1);
+
+        //Simulation.SetVector("hapticInVelocity", hapticInVelocity);
+        //Simulation.SetBuffer(Calculate_f_viscosity_kernel, "particles", unsortedParticlesBuffer);
+        //Simulation.SetBuffer(Calculate_f_viscosity_kernel, "hapticOutputForce", hapticOutputBuffer);
+        //Simulation.Dispatch(Calculate_f_viscosity_kernel, Mathf.CeilToInt(population / 256f), 1, 1);
+
+        //per block result
+        Utility.SetBuffer(Reduce_kernel, "reduceInput", hapticOutputBuffer);
+        Utility.Dispatch(Reduce_kernel, Mathf.CeilToInt(population / 256f), 1, 1);
+
+        //final result
+        Utility.SetBuffer(Reduce_kernel, "reduceInput", hapticOutputBuffer);
+        Utility.Dispatch(Reduce_kernel, Mathf.CeilToInt(population / (256f * 256f)), 1, 1);
+
+        hapticOutputBuffer.GetData(result, 0, 0, 3);
+        hapticPressureForce = Vector3.Lerp(new Vector3(result[0], result[1], result[2]), lastHapticPressureForce, 0.95f);
+
+        lastHapticPressureForce = hapticPressureForce;
+        //Debug.Log(hapticPressureForce);
 
 
         Simulation.SetBuffer(Apply_f_pressure_kernel, "particles", unsortedParticlesBuffer);
@@ -302,10 +362,7 @@ public class PBF : MonoBehaviour
         Simulation.SetBuffer(Apply_f_pressure_kernel, "globalHistogram", globalHistogramBuffer);
         Simulation.Dispatch(Apply_f_pressure_kernel, Mathf.CeilToInt(population / 256f), 1, 1);
 
-        hapticOutputBuffer.GetData(result);
-        hapticPressureForce = result[0];
-        //result[0] = new Vector3(0, 0, 0);
-
+        
         //indirect call to render
         instanceMaterial.SetBuffer("_Properties", meshPropertiesBuffer);
         Graphics.DrawMeshInstancedIndirect(sphereMesh, 0, instanceMaterial, bounds, argsBuffer);

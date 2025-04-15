@@ -50,6 +50,28 @@
 			const float densityMultiplier;
 			const float stepSize;
 			const float volumeValueOffset;
+            float3 hapticPointPos;
+            float hapticPointRadius;
+
+            float RaySphereIntersect(float3 sphereCenter, float sphereRadius, float3 rayOrigin, float3 rayDir) {
+                float3 oc = rayOrigin - sphereCenter;
+
+                float b = 2.0 * dot(oc, rayDir);
+                float c = dot(oc, oc) - sphereRadius * sphereRadius;
+                float discriminant = b * b - 4 * c; // 4*a*c -> 4*c
+
+                if (discriminant < 0) {
+                    return -1.0; // No intersection
+                }
+                else {
+                    float sqrtDiscriminant = sqrt(discriminant);
+                    float t1 = (-b - sqrtDiscriminant) / 2.0;
+                    float t2 = (-b + sqrtDiscriminant) / 2.0;
+                    if (t1 >= 0) return t1; // Closest intersection in front
+                    if (t2 >= 0) return t2; // Ray origin is inside sphere
+                    return -1.0; // Both intersections are behind
+                }
+            }
 
 			float2 RayBox(float3 boundsMin, float3 boundsMax, float3 rayOrigin, float3 rayDir)
 			{
@@ -96,6 +118,8 @@
 				float3 localViewVector = mul(unity_CameraInvProjection, float4(uv * 2 - 1, 0, -1));
 				float3 rayDir = normalize(mul(unity_CameraToWorld, float4(localViewVector, 0)));
 
+                float sphereDstInfo = RaySphereIntersect(hapticPointPos, hapticPointRadius, _WorldSpaceCameraPos, rayDir);
+
 				float2 boundsDstInfo = RayBox(0, boundsSize, _WorldSpaceCameraPos, rayDir);
 				float3 entryPoint = _WorldSpaceCameraPos + rayDir * (boundsDstInfo[0] + TinyNudge);
 
@@ -106,11 +130,15 @@
 					float3 samplePos = entryPoint + rayDir * dst;
 					float densityAlongStep = SampleDensity(samplePos) * densityMultiplier * stepSize;
 					densityAlongViewRay += densityAlongStep;
-				}
 
+					densityAlongViewRay = saturate(densityAlongViewRay);
+				}
+                if (sphereDstInfo > 0)
+                    return float3(1, 0, 0);
 
 				return densityAlongViewRay;
 			}
+
             fixed4 frag (v2f i) : SV_Target
             {
 
