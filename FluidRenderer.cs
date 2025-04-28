@@ -9,6 +9,9 @@ public class FluidRenderer : MonoBehaviour
     public float densityOffset;
     public float stepSize;
     public float densityMultiplier;
+    public float extinctionCoeff;
+    public Vector3 dirToSun;
+    public Vector3 fluidColor;
 
     [Header("Reference")]
     public Shader shader;
@@ -44,10 +47,15 @@ public class FluidRenderer : MonoBehaviour
 
         Vector3 BoundsSize = new Vector3(boundsX, boundsY, boundsZ);
         raymarchMat.SetVector("boundsSize", BoundsSize);
+        raymarchMat.SetVector("dirToSun", dirToSun);
+        raymarchMat.SetVector("fluidColor", fluidColor);
         raymarchMat.SetFloat("stepSize", stepSize);
-        raymarchMat.SetFloat("hapticPointRadius", 0.2f);
-        raymarchMat.SetVector("hapticPointPos", pbf.hapticInteractionPoint);
         raymarchMat.SetFloat("densityMultiplier", densityMultiplier);
         raymarchMat.SetFloat("volumeValueOffset", densityOffset);
+        raymarchMat.SetFloat("extinctionCoeff", extinctionCoeff);
+
+        raymarchMat.SetFloat("hapticPointRadius", 0.5f);
+        //raymarchMat.SetVector("hapticPointPos", pbf.hapticInteractionPoint);
+        raymarchMat.SetVector("hapticPointPos", new Vector3(5,10,5));
     }
 }
